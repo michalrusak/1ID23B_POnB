@@ -1,0 +1,9 @@
+<mat-grid-list cols="3" rowHeight="200px" gutterSize="16px">
+    <mat-grid-tile *ngFor="let photo of photos">
+      <img [src]="photo.url" [alt]="photo.title">
+      <mat-grid-tile-footer>
+        <h3>{{ photo.title }}</h3>
+      </mat-grid-tile-footer>
+    </mat-grid-tile>
+  </mat-grid-list>
+  

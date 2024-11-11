@@ -1,0 +1,18 @@
+<mat-card>
+    <form [formGroup]="photoForm" (ngSubmit)="onSubmit()">
+      <mat-form-field appearance="fill">
+        <mat-label>Tytuł</mat-label>
+        <input matInput formControlName="title" placeholder="Wprowadź tytuł">
+      </mat-form-field>
+  
+      <mat-form-field appearance="fill">
+        <mat-label>URL zdjęcia</mat-label>
+        <input matInput formControlName="url" placeholder="Wprowadź URL">
+      </mat-form-field>
+  
+      <button mat-raised-button color="primary" type="submit" [disabled]="photoForm.invalid">
+        Dodaj zdjęcie
+      </button>
+    </form>
+  </mat-card>
+  
