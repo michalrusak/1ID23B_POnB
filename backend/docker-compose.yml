@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  postgres_node1:
+    image: postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: photos_db
+    ports:
+      - "54321:5432"
+    volumes:
+      - pgdata1:/var/lib/postgresql/data
+
+  postgres_node2:
+    image: postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: photos_db
+    ports:
+      - "54322:5432"
+    volumes:
+      - pgdata2:/var/lib/postgresql/data
+
+  # ... repeat for remaining nodes ...
+
+volumes:
+  pgdata1:
+  pgdata2:
+  # Add volumes for each node
