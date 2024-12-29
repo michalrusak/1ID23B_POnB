@@ -1,30 +1,117 @@
 version: '3.8'
+
 services:
-  postgres_node1:
-    image: postgres
+  postgres:
+    image: postgres:13
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: photos_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "54321:5432"
+      - "5432:5432"
     volumes:
-      - pgdata1:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - blockchain_network
 
-  postgres_node2:
-    image: postgres
+  node1:
+    build: .
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: photos_db
+      - NODE_ID=node1
+      - PORT=5001
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=${SECRET_KEY}
     ports:
-      - "54322:5432"
-    volumes:
-      - pgdata2:/var/lib/postgresql/data
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - blockchain_network
 
-  # ... repeat for remaining nodes ...
+  node2:
+    build: .
+    environment:
+      - NODE_ID=node2
+      - PORT=5002
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - blockchain_network
+
+  node3:
+    build: .
+    environment:
+      - NODE_ID=node3
+      - PORT=5003
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - blockchain_network
+
+  node4:
+    build: .
+    environment:
+      - NODE_ID=node4
+      - PORT=5004
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "5004:5004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - blockchain_network
+
+  node5:
+    build: .
+    environment:
+      - NODE_ID=node5
+      - PORT=5005
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "5005:5005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - blockchain_network
+
+  node6:
+    build: .
+    environment:
+      - NODE_ID=node6
+      - PORT=5006
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=${SECRET_KEY}
+    ports:
+      - "5006:5006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - blockchain_network
+
+networks:
+  blockchain_network:
+    driver: bridge
 
 volumes:
-  pgdata1:
-  pgdata2:
-  # Add volumes for each node
+  postgres_data:
