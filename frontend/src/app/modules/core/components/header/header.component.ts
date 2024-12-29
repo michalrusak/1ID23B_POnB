@@ -5,7 +5,7 @@ import { selectAuthUser } from 'src/app/modules/auth/store/auth.selector';
 import { AppState } from 'src/app/store/app.reducer';
 import { RouterEnum } from 'src/enums/router.enum';
 import * as AuthActions from '../../../auth/store/auth.actions';
-import { User } from '../../models/user.model';
+import { User } from '../../models/models';
 
 @Component({
   selector: 'app-header',

@@ -19,29 +19,10 @@ export class RegisterComponent {
   RouterEnum = RouterEnum;
 
   form = new FormGroup({
-    firstName: new FormControl('', {
+    username: new FormControl('', {
       validators: [
         Validators.required,
         Validators.minLength(3),
-        Validators.maxLength(30),
-      ],
-      nonNullable: true,
-    }),
-
-    lastName: new FormControl('', {
-      validators: [
-        Validators.required,
-        Validators.minLength(3),
-        Validators.maxLength(30),
-      ],
-      nonNullable: true,
-    }),
-
-    email: new FormControl('', {
-      validators: [
-        Validators.email,
-        Validators.required,
-        Validators.minLength(5),
         Validators.maxLength(30),
       ],
       nonNullable: true,
@@ -78,7 +59,8 @@ export class RegisterComponent {
   }
 
   onSubmit() {
-    this.authService.register(this.form.getRawValue()).subscribe({
+    const { username, password } = this.form.getRawValue();
+    this.authService.register(username, password).subscribe({
       next: () => {
         this.router.navigate([RouterEnum.login]);
         this.notifierService.notify(

@@ -1,18 +1,35 @@
-<mat-card>
-    <form [formGroup]="photoForm" (ngSubmit)="onSubmit()">
-      <mat-form-field appearance="fill">
-        <mat-label>Tytuł</mat-label>
-        <input matInput formControlName="title" placeholder="Wprowadź tytuł">
-      </mat-form-field>
-  
-      <mat-form-field appearance="fill">
-        <mat-label>URL zdjęcia</mat-label>
-        <input matInput formControlName="url" placeholder="Wprowadź URL">
-      </mat-form-field>
-  
-      <button mat-raised-button color="primary" type="submit" [disabled]="photoForm.invalid">
-        Dodaj zdjęcie
-      </button>
-    </form>
-  </mat-card>
-  
+<div class="upload-container">
+  <div class="upload-card">
+    <h2>Upload Photo to Blockchain</h2>
+
+    <ng-container *ngIf="state$ | async as state">
+      <!-- Upload Form -->
+      <div class="upload-form" *ngIf="!state.isUploading">
+        <label class="upload-button">
+          <input type="file" accept="image/jpeg,image/png,image/gif" (change)="onFileSelected($event)"
+            [disabled]="state.isUploading">
+          <span>Select Photo</span>
+        </label>
+      </div>
+
+      <!-- Progress Indicator -->
+      <div class="progress-container" *ngIf="state.isUploading">
+        <div class="progress-bar">
+          <div class="progress-fill" [style.width.%]="state.uploadProgress">
+          </div>
+        </div>
+        <div class="progress-text">
+          Processing... {{state.uploadProgress}}%
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="message error" *ngIf="state.error">
+        {{state.error}}
+      </div>
+      <div class="message success" *ngIf="state.success">
+        {{state.success}}
+      </div>
+    </ng-container>
+  </div>
+</div>

@@ -1,14 +1,18 @@
 import { createAction, props } from '@ngrx/store';
-import { LoginData, ResponseUser } from '../../core/models/auth.model';
-import { User } from '../../core/models/user.model';
+import {
+  LoginData,
+  ResponseUser,
+  RegisterData,
+  User,
+} from '../../core/models/models';
 
-enum AuthActionType {
+export enum AuthActionType {
   LOGIN = '[Auth] Login',
   LOGIN_SUCCESS = '[Auth] Login Success',
   LOGIN_FAILURE = '[Auth] Login Failure',
-  AUTOLOGIN = '[Auth] Auto Login',
-  AUTOLOGIN_SUCCESS = '[Auth] Auto Login Success',
-  AUTOLOGIN_FAILURE = '[Auth] Auto Login Failure',
+  REGISTER = '[Auth] Register',
+  REGISTER_SUCCESS = '[Auth] Register Success',
+  REGISTER_FAILURE = '[Auth] Register Failure',
   LOGOUT = '[Auth] Logout',
   LOGOUT_SUCCESS = '[Auth] Logout Success',
   LOGOUT_FAILURE = '[Auth] Logout Failure',
@@ -30,22 +34,26 @@ export const loginFailure = createAction(
   props<{ error: string }>()
 );
 
-export const autoLogin = createAction(AuthActionType.AUTOLOGIN);
-
-export const autoLoginSuccess = createAction(
-  AuthActionType.AUTOLOGIN_SUCCESS,
-  props<{ user: ResponseUser }>()
+export const register = createAction(
+  AuthActionType.REGISTER,
+  props<{ registerData: RegisterData }>()
 );
 
-export const autoLoginFailure = createAction(AuthActionType.AUTOLOGIN_FAILURE);
+export const registerSuccess = createAction(
+  AuthActionType.REGISTER_SUCCESS,
+  props<{ message: string }>()
+);
+
+export const registerFailure = createAction(
+  AuthActionType.REGISTER_FAILURE,
+  props<{ error: string }>()
+);
 
 export const logout = createAction(AuthActionType.LOGOUT);
-
 export const logoutSuccess = createAction(AuthActionType.LOGOUT_SUCCESS);
-
 export const logoutFailure = createAction(AuthActionType.LOGOUT_FAILURE);
 
-export const UpdateUser = createAction(
+export const updateUser = createAction(
   AuthActionType.UPDATE_USER,
   props<{ user: User }>()
 );

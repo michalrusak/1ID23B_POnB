@@ -1,55 +1,60 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
-import { EndPoints } from 'src/enums/endPoints.enum';
+import { BehaviorSubject, Observable, of, tap } from 'rxjs';
 import { environment } from 'src/environments/environment.development';
-import { LoginData, RegisterData, ResponseUser } from '../models/auth.model';
-import { MessageResponse } from '../models/response.model';
-import { AppState } from 'src/app/store/app.reducer';
-import { Store } from '@ngrx/store';
-import { selectIsUserLogged } from '../../auth/store/auth.selector';
+import { User, ResponseUser } from '../models/models';
 
 @Injectable({
   providedIn: 'root',
 })
 export class AuthService {
-  apiURL = `${environment.apiURL}/${EndPoints.auth}`;
-  constructor(private http: HttpClient, private store: Store<AppState>) {}
+  private readonly apiUrl = environment.apiURL;
+  private readonly tokenKey = 'auth_token';
+  private currentUserSubject = new BehaviorSubject<User | null>(null);
 
-  loggedUser$ = this.store.select(selectIsUserLogged);
-
-  login(body: LoginData): Observable<ResponseUser> {
-    return this.http.post<ResponseUser>(
-      `${this.apiURL}/${EndPoints.login}`,
-      body,
-      {
-        withCredentials: true,
-      }
-    );
+  constructor(private http: HttpClient) {
+    const token = localStorage.getItem(this.tokenKey);
+    if (token) {
+      this.validateToken();
+    }
   }
 
-  logout(): Observable<MessageResponse> {
-    return this.http.get<MessageResponse>(
-      `${this.apiURL}/${EndPoints.logout}`,
-      {
-        withCredentials: true,
-      }
-    );
+  get currentUser$(): Observable<User | null> {
+    return this.currentUserSubject.asObservable();
   }
 
-  register(body: RegisterData): Observable<MessageResponse> {
-    return this.http.post<MessageResponse>(
-      `${this.apiURL}/${EndPoints.register}`,
-      body
-    );
+  get token(): string | null {
+    return localStorage.getItem(this.tokenKey);
   }
 
-  autoLogin(): Observable<ResponseUser> {
-    return this.http.get<ResponseUser>(
-      `${this.apiURL}/${EndPoints.autoLogin}`,
-      {
-        withCredentials: true,
-      }
-    );
+  register(username: string, password: string): Observable<ResponseUser> {
+    return this.http.post<ResponseUser>(`${this.apiUrl}/user/register`, {
+      username,
+      password,
+    });
   }
+
+  login(username: string, password: string): Observable<ResponseUser> {
+    return this.http
+      .post<ResponseUser>(`${this.apiUrl}/user/login`, {
+        username,
+        password,
+      })
+      .pipe(
+        tap((response) => {
+          if (response.token) {
+            localStorage.setItem(this.tokenKey, response.token);
+          }
+        })
+      );
+  }
+
+  logout(): Observable<void> {
+    localStorage.removeItem(this.tokenKey);
+    this.currentUserSubject.next(null);
+
+    return of(void 0);
+  }
+
+  private validateToken(): void {}
 }

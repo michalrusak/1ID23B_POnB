@@ -12,55 +12,57 @@ export class AuthEffects {
   login$ = createEffect(() =>
     this.actions$.pipe(
       ofType(AuthActions.login),
-      switchMap((action) => {
-        return this.authService.login(action.loginData).pipe(
+      switchMap((action) =>
+        this.authService.login(action.loginData.username, action.loginData.password).pipe(
           map((user) => {
             this.router.navigate([RouterEnum.home]);
-            this.notifierService.notify('success', 'Login success!');
+            this.notifierService.notify('success', 'Login successful');
             return AuthActions.loginSuccess({ user });
           }),
-          catchError((err) => {
-            this.notifierService.notify('error', 'Login error!');
-            return of(AuthActions.loginFailure({ error: err }));
+          catchError((error) => {
+            this.notifierService.notify('error', 'Login failed');
+            return of(AuthActions.loginFailure({ error: error.message }));
           })
-        );
-      })
+        )
+      )
     )
   );
 
-  autoLogin$ = createEffect(() =>
+  register$ = createEffect(() =>
     this.actions$.pipe(
-      ofType(AuthActions.autoLogin),
-      switchMap(() => {
-        return this.authService.autoLogin().pipe(
-          map((user) => {
-            return AuthActions.autoLoginSuccess({ user });
+      ofType(AuthActions.register),
+      switchMap((action) =>
+        this.authService.register(action.registerData.username, action.registerData.password).pipe(
+          map((response) => {
+            this.router.navigate([RouterEnum.login]);
+            this.notifierService.notify('success', 'Registration successful');
+            return AuthActions.registerSuccess({ message: response.username });
           }),
-          catchError((err) => {
-            this.notifierService.notify('error', 'Auto login error!');
-            return of(AuthActions.autoLoginFailure());
+          catchError((error) => {
+            this.notifierService.notify('error', 'Registration failed');
+            return of(AuthActions.registerFailure({ error: error.message }));
           })
-        );
-      })
+        )
+      )
     )
   );
 
   logout$ = createEffect(() =>
     this.actions$.pipe(
       ofType(AuthActions.logout),
-      switchMap(() => {
-        return this.authService.logout().pipe(
+      switchMap(() =>
+        this.authService.logout().pipe(
           map(() => {
             this.router.navigate([RouterEnum.login]);
-            this.notifierService.notify('success', 'Logout success');
+            this.notifierService.notify('success', 'Logout successful');
             return AuthActions.logoutSuccess();
           }),
-          catchError((err) => {
+          catchError(() => {
             this.notifierService.notify('error', 'Logout failed');
             return of(AuthActions.logoutFailure());
           })
-        );
-      })
+        )
+      )
     )
   );
 

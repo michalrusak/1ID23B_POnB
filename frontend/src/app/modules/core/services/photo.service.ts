@@ -1,6 +1,9 @@
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, BehaviorSubject } from 'rxjs';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { Observable, BehaviorSubject, tap } from 'rxjs';
+import { environment } from 'src/environments/environment.development';
+import { ImageResponse, BlockchainResponse } from '../models/models';
+import { AuthService } from './auth.service';
 
 export interface Photo {
   id: string;
@@ -12,24 +15,64 @@ export interface Photo {
   providedIn: 'root'
 })
 export class PhotoService {
-  private photosUrl = 'https://api.example.com/photos'; 
-  private photos$ = new BehaviorSubject<Photo[]>([]);
+  private readonly apiUrl = environment.apiURL;
+  private photos$ = new BehaviorSubject<any[]>([]);
 
-  constructor(private http: HttpClient) {}
+  constructor(
+    private http: HttpClient,
+    private authService: AuthService
+  ) {}
 
-  get photos(): Observable<Photo[]> {
+  get photos(): Observable<any[]> {
     return this.photos$.asObservable();
   }
 
-  fetchPhotos(): void {
-    this.http.get<Photo[]>(this.photosUrl).subscribe((photos) => {
-      this.photos$.next(photos);
+  private get authHeaders(): HttpHeaders {
+    return new HttpHeaders({
+      'Authorization': `${this.authService.token}`
     });
   }
 
-  addPhoto(photo: Photo): void {
-    this.http.post<Photo>(this.photosUrl, photo).subscribe(() => {
-      this.fetchPhotos(); 
-    });
+  uploadPhoto(file: File): Observable<ImageResponse> {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    // First, upload to user system
+    return this.http.post<ImageResponse>(
+      `${this.apiUrl}/user/upload-image`,
+      formData,
+      { headers: this.authHeaders }
+    ).pipe(
+      tap(() => this.processPhotoInBlockchain(file))
+    );
+  }
+
+  private processPhotoInBlockchain(file: File): Observable<ImageResponse> {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    return this.http.post<ImageResponse>(
+      `${this.apiUrl}/blockchain/image/process`,
+      formData
+    );
+  }
+
+  mineBlock(): Observable<BlockchainResponse> {
+    return this.http.get<BlockchainResponse>(
+      `${this.apiUrl}/blockchain/mine`
+    );
+  }
+
+  getBlockchain(): Observable<BlockchainResponse> {
+    return this.http.get<BlockchainResponse>(
+      `${this.apiUrl}/blockchain/chain`
+    );
+  }
+
+  simulateFailure(type: 'node_down' | 'network_delay' | 'data_corruption'): Observable<BlockchainResponse> {
+    return this.http.post<BlockchainResponse>(
+      `${this.apiUrl}/blockchain/simulate/failure`,
+      { type }
+    );
   }
 }

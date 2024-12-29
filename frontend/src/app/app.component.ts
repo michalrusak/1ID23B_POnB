@@ -12,8 +12,7 @@ export class AppComponent implements OnInit {
   title = 'Photo App';
 
   constructor(private store: Store<AppState>) {}
-
   ngOnInit(): void {
-    this.store.dispatch(AuthActions.autoLogin());
+    throw new Error('Method not implemented.');
   }
 }

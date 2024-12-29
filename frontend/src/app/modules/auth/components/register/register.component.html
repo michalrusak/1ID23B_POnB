@@ -3,32 +3,29 @@
     <h2>Register</h2>
 
     <mat-form-field class="input" appearance="fill">
-      <mat-label>Firstname</mat-label>
-      <input autocomplete="name" type="text" matInput formControlName="firstName">
-      <mat-error *ngIf="controls.firstName.invalid">{{getErrorMessage(controls.firstName)}}</mat-error>
-    </mat-form-field>
-
-    <mat-form-field class="input" appearance="fill">
-      <mat-label>Lastname</mat-label>
-      <input autocomplete="name" type="text" matInput formControlName="lastName">
-      <mat-error *ngIf="controls.lastName.invalid">{{getErrorMessage(controls.lastName)}}</mat-error>
-    </mat-form-field>
-
-    <mat-form-field class="input" appearance="fill">
-      <mat-label>Email</mat-label>
-      <input autocomplete="email" type="email" matInput formControlName="email">
-      <mat-error *ngIf="controls.email.invalid">{{getErrorMessage(controls.email)}}</mat-error>
+      <mat-label>Username</mat-label>
+      <input autocomplete="username" type="text" matInput formControlName="username">
+      <mat-error *ngIf="controls.username.invalid">
+        {{getErrorMessage(controls.username)}}
+      </mat-error>
     </mat-form-field>
 
     <mat-form-field class="input" appearance="fill">
       <mat-label>Password</mat-label>
-      <input autocomplete="current-password" type="password" matInput formControlName="password">
-      <mat-error *ngIf="controls.email.invalid">{{getErrorMessage(controls.password)}}</mat-error>
+      <input autocomplete="new-password" type="password" matInput formControlName="password">
+      <mat-error *ngIf="controls.password.invalid">
+        {{getErrorMessage(controls.password)}}
+      </mat-error>
     </mat-form-field>
 
-    <button [disabled]="form.invalid" type="submit" mat-raised-button color="primary">Register</button>
-    <p class="question">Have you account already?</p>
-    <button type="button" routerLink="/{{RouterEnum.login}}" mat-raised-button color="primary">Login</button>
-  </form>
 
+    <button [disabled]="form.invalid" type="submit" mat-raised-button color="primary">
+      Register
+    </button>
+
+    <p class="question">Already have an account?</p>
+    <button type="button" routerLink="/{{RouterEnum.login}}" mat-raised-button color="primary">
+      Login
+    </button>
+  </form>
 </div>

@@ -8,12 +8,10 @@ const routes: Routes = [
   {
     path: RouterEnum.addPhoto,
     component: AddPhotoComponent,
-    // canActivate: [],
   },
   {
     path: RouterEnum.photos,
     component: PhotoListComponent,
-    // canActivate: [],
   },
 ];
 
