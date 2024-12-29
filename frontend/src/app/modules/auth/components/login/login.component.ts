@@ -1,9 +1,9 @@
 import { Component } from '@angular/core';
 import { FormControl, FormGroup, Validators } from '@angular/forms';
+import { Router } from '@angular/router';
 import { Store } from '@ngrx/store';
-import { AppState } from 'src/app/store/app.reducer';
+import { AuthService } from 'src/app/modules/core/services/auth.service';
 import { RouterEnum } from 'src/enums/router.enum';
-import * as AuthActions from '../../store/auth.actions';
 
 @Component({
   selector: 'app-login',
@@ -31,7 +31,7 @@ export class LoginComponent {
     }),
   });
 
-  constructor(private store: Store<AppState>) {}
+  constructor(private authService: AuthService, private router: Router) {}
 
   get controls() {
     return this.form.controls;
@@ -52,9 +52,18 @@ export class LoginComponent {
 
   onSubmit() {
     if (this.form.valid) {
-      this.store.dispatch(
-        AuthActions.login({ loginData: this.form.getRawValue() })
-      );
+      const { username, password } = this.form.value;
+      if (username && password) {
+        this.authService.login(username, password).subscribe(
+          () => {
+            this.form.reset();
+            this.router.navigate([RouterEnum.addPhoto]);
+          },
+          (error) => {
+            console.error(error);
+          }
+        );
+      }
     }
   }
 }

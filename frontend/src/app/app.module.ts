@@ -8,9 +8,6 @@ import { HomeModule } from './modules/home/home.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { StoreModule } from '@ngrx/store';
 import { StoreDevtoolsModule } from '@ngrx/store-devtools';
-import { EffectsModule } from '@ngrx/effects';
-import { authReducer } from './modules/auth/store/auth.reducer';
-import { AuthEffects } from './modules/auth/store/auth.effects';
 import { NotifierOptions, NotifierModule } from 'angular-notifier';
 import { PhotoModule } from './modules/photo/photo.module';
 
@@ -39,7 +36,6 @@ const customNotifier: NotifierOptions = {
     HomeModule,
     AuthModule,
     PhotoModule,
-    StoreModule.forRoot({ auth: authReducer }),
     StoreDevtoolsModule.instrument({ maxAge: 25, logOnly: !isDevMode() }),
     NotifierModule.withConfig(customNotifier),
   ],

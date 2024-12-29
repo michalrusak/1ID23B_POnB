@@ -1,6 +1,13 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { Observable, BehaviorSubject, tap } from 'rxjs';
+import {
+  Observable,
+  BehaviorSubject,
+  tap,
+  switchMap,
+  catchError,
+  of,
+} from 'rxjs';
 import { environment } from 'src/environments/environment.development';
 import { ImageResponse, BlockchainResponse } from '../models/models';
 import { AuthService } from './auth.service';
@@ -10,18 +17,14 @@ export interface Photo {
   url: string;
   title: string;
 }
-
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
 export class PhotoService {
   private readonly apiUrl = environment.apiURL;
   private photos$ = new BehaviorSubject<any[]>([]);
 
-  constructor(
-    private http: HttpClient,
-    private authService: AuthService
-  ) {}
+  constructor(private http: HttpClient, private authService: AuthService) {}
 
   get photos(): Observable<any[]> {
     return this.photos$.asObservable();
@@ -29,50 +32,43 @@ export class PhotoService {
 
   private get authHeaders(): HttpHeaders {
     return new HttpHeaders({
-      'Authorization': `${this.authService.token}`
+      Authorization: this.authService.authToken,
     });
   }
 
-  uploadPhoto(file: File): Observable<ImageResponse> {
+  uploadAndProcessPhoto(file: File): Observable<BlockchainResponse> {
     const formData = new FormData();
     formData.append('image', file);
 
-    // First, upload to user system
-    return this.http.post<ImageResponse>(
-      `${this.apiUrl}/user/upload-image`,
-      formData,
-      { headers: this.authHeaders }
-    ).pipe(
-      tap(() => this.processPhotoInBlockchain(file))
-    );
+    return this.http
+      .post<ImageResponse>(`${this.apiUrl}/user/upload-image`, formData, {
+        headers: this.authHeaders,
+      })
+      .pipe(
+        switchMap(() => this.processPhotoInBlockchain(formData)),
+        switchMap(() => this.mineBlock()),
+        switchMap(() => this.getBlockchain()),
+        catchError((error) => {
+          console.error('Error processing photo:', error);
+          return of({ success: false, message: 'Failed to process photo' });
+        })
+      );
   }
 
-  private processPhotoInBlockchain(file: File): Observable<ImageResponse> {
-    const formData = new FormData();
-    formData.append('image', file);
-
+  private processPhotoInBlockchain(
+    formData: FormData
+  ): Observable<ImageResponse> {
     return this.http.post<ImageResponse>(
       `${this.apiUrl}/blockchain/image/process`,
       formData
     );
   }
 
-  mineBlock(): Observable<BlockchainResponse> {
-    return this.http.get<BlockchainResponse>(
-      `${this.apiUrl}/blockchain/mine`
-    );
+  private mineBlock(): Observable<BlockchainResponse> {
+    return this.http.get<BlockchainResponse>(`${this.apiUrl}/blockchain/mine`);
   }
 
   getBlockchain(): Observable<BlockchainResponse> {
-    return this.http.get<BlockchainResponse>(
-      `${this.apiUrl}/blockchain/chain`
-    );
-  }
-
-  simulateFailure(type: 'node_down' | 'network_delay' | 'data_corruption'): Observable<BlockchainResponse> {
-    return this.http.post<BlockchainResponse>(
-      `${this.apiUrl}/blockchain/simulate/failure`,
-      { type }
-    );
+    return this.http.get<BlockchainResponse>(`${this.apiUrl}/blockchain/chain`);
   }
 }

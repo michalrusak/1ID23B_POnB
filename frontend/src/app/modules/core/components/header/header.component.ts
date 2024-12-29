@@ -1,11 +1,10 @@
 import { Component } from '@angular/core';
 import { Store } from '@ngrx/store';
 import { Observable } from 'rxjs';
-import { selectAuthUser } from 'src/app/modules/auth/store/auth.selector';
-import { AppState } from 'src/app/store/app.reducer';
+
 import { RouterEnum } from 'src/enums/router.enum';
-import * as AuthActions from '../../../auth/store/auth.actions';
 import { User } from '../../models/models';
+import { AuthService } from '../../services/auth.service';
 
 @Component({
   selector: 'app-header',
@@ -13,13 +12,13 @@ import { User } from '../../models/models';
   styleUrls: ['./header.component.scss'],
 })
 export class HeaderComponent {
-  constructor(private store: Store<AppState>) {}
+  constructor(private authService: AuthService) {}
 
-  user$: Observable<User | null> = this.store.select(selectAuthUser);
+  user$: Observable<String | null> = this.authService.currentUser$;
 
   RouterEnum = RouterEnum;
 
   logout() {
-    this.store.dispatch(AuthActions.logout());
+    this.authService.logout();
   }
 }

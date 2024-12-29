@@ -7,3 +7,4 @@ docker-py==1.10.6
 requests==2.26.0
 pillow==9.5.0 
 python-multipart==0.0.5
+flask-cors

@@ -6,6 +6,7 @@ from werkzeug.middleware.dispatcher import DispatcherMiddleware
 import multiprocessing
 import time
 from dotenv import load_dotenv
+from flask_cors import CORS
 
 load_dotenv()
 
@@ -13,9 +14,40 @@ def create_app():
     """Create the main application with both blockchain and user management"""
     app = Flask(__name__)
     
+    # Enable CORS for all routes
+    CORS(app, resources={
+        r"/blockchain/*": {
+            "origins": ["http://localhost:4200"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        },
+        r"/user/*": {
+            "origins": ["http://localhost:4200"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
+    
     # Create blockchain and user management apps
     blockchain_app = create_blockchain_app()
     user_app = create_user_app()
+    
+    # Enable CORS for sub-applications
+    CORS(blockchain_app, resources={
+        r"/*": {
+            "origins": ["http://localhost:4200"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
+    
+    CORS(user_app, resources={
+        r"/*": {
+            "origins": ["http://localhost:4200"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
     
     # Combine apps using middleware
     app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {
