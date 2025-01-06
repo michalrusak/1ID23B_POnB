@@ -13,6 +13,7 @@ load_dotenv()
 def create_app():
     """Create the main application with both blockchain and user management"""
     app = Flask(__name__)
+    print("test")
     
     # Enable CORS for all routes
     CORS(app, resources={
@@ -29,6 +30,7 @@ def create_app():
     })
     
     # Create blockchain and user management apps
+    print("test")
     blockchain_app = create_blockchain_app()
     user_app = create_user_app()
     

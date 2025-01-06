@@ -89,9 +89,85 @@ class BlockchainNode:
         self.chain = [self.create_genesis_block()]
         self.difficulty = difficulty
         self.pending_transactions = []
-        self.nodes = set()
+        self.nodes = [ 5002, 5003, 5004, 5005, 5006]
+        # self.nodes = [ "http://172.30.0.6:5002/", "http://172.30.0.6:5003/", "http://172.30.0.6:5004/", "http://172.30.0.6:5005/", "http://172.30.0.6:5006/"]
         self.lock = threading.Lock()
         self.mining_status = {"is_mining": False, "progress": 0}
+
+    def is_chain_valid(self, chain):
+        """Verify if a given chain is valid"""
+        for i in range(1, len(chain)):
+            current_block = chain[i]
+            previous_block = chain[i-1]
+
+            # Verify current block hash
+            if current_block.hash != current_block.calculate_hash():
+                return False
+
+            # Verify chain continuity
+            if current_block.previous_hash != previous_block.hash:
+                return False
+
+            # Verify block mining difficulty
+            if current_block.hash[:self.difficulty] != "0" * self.difficulty:
+                return False
+
+            # Verify all transactions in the block
+            for transaction in current_block.transactions:
+                if not transaction.verify_crc():
+                    return False
+
+        return True
+
+    def resolve_conflicts(self):
+        """
+        Consensus algorithm. Resolves conflicts by replacing our chain with the longest valid chain in the network.
+        Returns True if our chain was replaced, False otherwise.
+        """
+        new_chain = None
+        current_length = len(self.chain)
+        
+        print(f"Starting chain resolution. Current length: {current_length}")
+
+        # Get and verify chains from all nodes
+        for node in self.nodes:
+            try:
+                response = requests.get(f'http://{node}/blockchain/chain', timeout=5)
+                if response.status_code == 200:
+                    chain_data = response.json()
+                    chain_length = chain_data['length']
+                    chain = []
+
+                    # Reconstruct the chain from JSON data
+                    for block_data in chain_data['chain']:
+                        transactions = [Transaction.from_dict(t) for t in block_data['transactions']]
+                        block = Block(
+                            block_data['index'],
+                            block_data['previous_hash'],
+                            transactions,
+                            block_data['timestamp']
+                        )
+                        block.hash = block_data['hash']
+                        chain.append(block)
+
+                    # Check if the chain is longer and valid
+                    if chain_length > current_length and self.is_chain_valid(chain):
+                        current_length = chain_length
+                        new_chain = chain
+                        print(f"Found valid longer chain from {node}, length: {chain_length}")
+
+            except requests.exceptions.RequestException as e:
+                print(f"Error contacting node {node}: {e}")
+                continue
+
+        # Replace our chain if we found a valid longer one
+        if new_chain:
+            self.chain = new_chain
+            print("Chain replaced successfully")
+            return True
+
+        print("Current chain is authoritative")
+        return False
 
     def create_genesis_block(self):
         return Block(0, "0", [Transaction("Genesis Block")], time.time())
@@ -270,19 +346,73 @@ def create_blockchain_app():
 
     @app.route('/image/process', methods=['POST'])
     def process_image():
-        if 'image' not in request.files:
-            print("No image provided in the request")  # Brak obrazu w żądaniu
-            return jsonify({'message': 'No image provided'}), 400
+        try:
+            # Check if request contains any files
+            if not request.files:
+                return jsonify({
+                    'error': 'NO_FILES',
+                    'message': 'No files were uploaded in the request',
+                    'details': 'Request must include multipart/form-data with an image file'
+                }), 400
 
-        image_file = request.files['image']
-        image_data = image_file.read()
-        print(f"Received image of size: {len(image_data)} bytes")  # Rozmiar obrazu
+            # Check if image field exists
+            if 'image' not in request.files:
+                return jsonify({
+                    'error': 'NO_IMAGE_FIELD',
+                    'message': 'No image field found in the request',
+                    'details': 'Form data must contain a field named "image"'
+                }), 400
 
-        if blockchain.process_image(image_data):
-            print("Image processed successfully")  # Sukces
-            return jsonify({'message': 'Image processed successfully'}), 200
-        print("Image processing failed")  # Niepowodzenie
-        return jsonify({'message': 'Image processing failed'}), 400
+            image_file = request.files['image']
+
+            # Check if filename is empty
+            if image_file.filename == '':
+                return jsonify({
+                    'error': 'EMPTY_FILENAME',
+                    'message': 'Submitted file has no filename',
+                    'details': 'The uploaded file must have a valid filename'
+                }), 400
+
+            # Read image data
+            try:
+                image_data = image_file.read()
+                if not image_data:
+                    return jsonify({
+                        'error': 'EMPTY_FILE',
+                        'message': 'Uploaded file is empty',
+                        'details': f'File size: {len(image_data)} bytes'
+                    }), 400
+            except Exception as e:
+                return jsonify({
+                    'error': 'FILE_READ_ERROR',
+                    'message': 'Failed to read uploaded file',
+                    'details': str(e)
+                }), 400
+
+            # Process the image
+            if blockchain.process_image(image_data):
+                return jsonify({
+                    'success': True,
+                    'message': 'Image processed successfully',
+                    'details': {
+                        'file_size': len(image_data),
+                        'filename': image_file.filename,
+                        'content_type': image_file.content_type
+                    }
+                }), 200
+            else:
+                return jsonify({
+                    'error': 'PROCESSING_FAILED',
+                    'message': 'Image processing failed',
+                    'details': 'The blockchain network rejected the image transaction'
+                }), 400
+
+        except Exception as e:
+            return jsonify({
+                'error': 'INTERNAL_ERROR',
+                'message': 'An unexpected error occurred',
+                'details': str(e)
+            }), 500
 
 
 
@@ -297,9 +427,22 @@ def create_blockchain_app():
                 'confirmations': len(blockchain.pending_transactions)
             }), 409
 
+        # Mine the block
         result = blockchain.mine_pending_transactions()
         
         if result["success"]:
+            # After successful mining, resolve conflicts with other nodes
+            print("Starting consensus resolution after mining")
+            was_chain_replaced = blockchain.resolve_conflicts()
+            
+            # Broadcast the new block to all nodes
+            for node in blockchain.nodes:
+                try:
+                    requests.get(f'http://{node}/blockchain/nodes/resolve', timeout=5)
+                except requests.exceptions.RequestException as e:
+                    print(f"Error notifying node {node}: {e}")
+
+            result["chain_status"] = "replaced" if was_chain_replaced else "authoritative"
             return jsonify(result), 200
         else:
             return jsonify(result), 400
@@ -346,5 +489,22 @@ def create_blockchain_app():
             return jsonify({'message': 'Data corruption simulated'})
             
         return jsonify({'message': 'Unknown failure type'})
+
+    @app.route('/nodes/resolve', methods=['GET'])
+    def consensus():
+        replaced = blockchain.resolve_conflicts()
+        chain_data = [{
+            'index': block.index,
+            'previous_hash': block.previous_hash,
+            'transactions': [t.to_dict() for t in block.transactions],
+            'timestamp': block.timestamp,
+            'hash': block.hash
+        } for block in blockchain.chain]
+
+        return jsonify({
+            'message': 'Chain was replaced' if replaced else 'Chain is authoritative',
+            'chain': chain_data,
+            'length': len(blockchain.chain)
+        }), 200
 
     return app
