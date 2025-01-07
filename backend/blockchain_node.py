@@ -88,13 +88,16 @@ class Block:
             self.nonce += 1
             self.hash = self.calculate_hash()
 
+def generate_node_addresses(start_port, num_nodes):
+    return [f"http://localhost:{start_port + i}" for i in range(1, num_nodes)]
+
 class BlockchainNode:
-    def __init__(self, node_id, difficulty=2):
+    def __init__(self, node_id, start_port=5001, num_nodes=6, difficulty=2):
         self.node_id = node_id
         self.chain = [self.create_genesis_block()]
         self.difficulty = difficulty
         self.pending_transactions = []
-        self.nodes = ["http://localhost:5002", "http://localhost:5003", "http://localhost:5004", "http://localhost:5005", "http://localhost:5006"]
+        self.nodes = generate_node_addresses(start_port, num_nodes)
         self.lock = threading.Lock()
         self.mining_status = {"is_mining": False, "progress": 0}
 
@@ -193,7 +196,7 @@ class BlockchainNode:
             try:
                 logger.info(f"Contacting node: {node_address}")
                 response = requests.post(
-                    f'http://{node_address}/verify_transaction',
+                    f'http://{node_address}/blockchain/verify_transaction',
                     json=transaction.to_dict(),
                     timeout=5
                 )

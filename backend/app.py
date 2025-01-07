@@ -58,9 +58,11 @@ def start_node(port):
     app.run(host='0.0.0.0', port=port)
 
 def start_network(num_nodes=6, start_port=5001):
-    """Uruchamia wiele węzłów blockchain."""
     logger.info(f"Uruchamianie sieci z {num_nodes} węzłami...")
     processes = []
+    node_addresses = generate_node_addresses(start_port, num_nodes)
+    logger.info(f"Adresy węzłów: {node_addresses}")
+    
     for i in range(num_nodes):
         port = start_port + i
         process = multiprocessing.Process(target=start_node, args=(port,))
@@ -86,3 +88,8 @@ if __name__ == '__main__':
     # Uruchamianie pojedynczego węzła
     logger.info("Uruchamianie aplikacji...")
     start_node(port)
+
+
+
+def generate_node_addresses(start_port, num_nodes):
+    return [f"http://localhost:{start_port + i}" for i in range(1, num_nodes)]
