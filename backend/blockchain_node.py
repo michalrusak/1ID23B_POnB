@@ -10,6 +10,11 @@ from PIL import Image
 import io
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class Transaction:
     def __init__(self, data, transaction_type="generic"):
@@ -89,8 +94,7 @@ class BlockchainNode:
         self.chain = [self.create_genesis_block()]
         self.difficulty = difficulty
         self.pending_transactions = []
-        self.nodes = [ 5002, 5003, 5004, 5005, 5006]
-        # self.nodes = [ "http://172.30.0.6:5002/", "http://172.30.0.6:5003/", "http://172.30.0.6:5004/", "http://172.30.0.6:5005/", "http://172.30.0.6:5006/"]
+        self.nodes = ["http://localhost:5002", "http://localhost:5003", "http://localhost:5004", "http://localhost:5005", "http://localhost:5006"]
         self.lock = threading.Lock()
         self.mining_status = {"is_mining": False, "progress": 0}
 
@@ -127,7 +131,7 @@ class BlockchainNode:
         new_chain = None
         current_length = len(self.chain)
         
-        print(f"Starting chain resolution. Current length: {current_length}")
+        logger.info(f"Starting chain resolution. Current length: {current_length}")
 
         # Get and verify chains from all nodes
         for node in self.nodes:
@@ -154,19 +158,19 @@ class BlockchainNode:
                     if chain_length > current_length and self.is_chain_valid(chain):
                         current_length = chain_length
                         new_chain = chain
-                        print(f"Found valid longer chain from {node}, length: {chain_length}")
+                        logger.info(f"Found valid longer chain from {node}, length: {chain_length}")
 
             except requests.exceptions.RequestException as e:
-                print(f"Error contacting node {node}: {e}")
+                logger.error(f"Error contacting node {node}: {e}")
                 continue
 
         # Replace our chain if we found a valid longer one
         if new_chain:
             self.chain = new_chain
-            print("Chain replaced successfully")
+            logger.info("Chain replaced successfully")
             return True
 
-        print("Current chain is authoritative")
+        logger.info("Current chain is authoritative")
         return False
 
     def create_genesis_block(self):
@@ -183,23 +187,23 @@ class BlockchainNode:
             self.pending_transactions.append(transaction)
 
     def broadcast_transaction(self, transaction):
-        print(f"Broadcasting transaction")  # Log danych transakcji
+        logger.info("Broadcasting transaction")
 
         def confirm_with_node(node_address):
             try:
-                print(f"Contacting node: {node_address}")  # Log kontaktu z węzłem
+                logger.info(f"Contacting node: {node_address}")
                 response = requests.post(
                     f'http://{node_address}/verify_transaction',
                     json=transaction.to_dict(),
                     timeout=5
                 )
                 if response.status_code == 200:
-                    print(f"Node {node_address} confirmed transaction")  # Sukces
+                    logger.info(f"Node {node_address} confirmed transaction")
                     return node_address
                 else:
-                    print(f"Node {node_address} rejected transaction with status {response.status_code}")  # Błąd statusu
+                    logger.warning(f"Node {node_address} rejected transaction with status {response.status_code}")
             except requests.exceptions.RequestException as e:
-                print(f"Error contacting node {node_address}: {e}")  # Błąd sieciowy
+                logger.error(f"Error contacting node {node_address}: {e}")
             return None
 
         nodes_contacted = []
@@ -212,8 +216,8 @@ class BlockchainNode:
                     confirmations.add(result)
                     nodes_contacted.append(result)
 
-        print(f"Nodes contacted: {nodes_contacted}")  # Lista kontaktowanych węzłów
-        print(f"Confirmations: {len(confirmations)} / {len(self.nodes)} required: {len(self.nodes) * 2 // 3}")
+        logger.info(f"Nodes contacted: {nodes_contacted}")
+        logger.info(f"Confirmations: {len(confirmations)} / {len(self.nodes)} required: {len(self.nodes) * 2 // 3}")
         return len(confirmations) >= len(self.nodes) * 2 // 3
 
 
@@ -227,136 +231,130 @@ class BlockchainNode:
         return True
 
     def process_image(self, image_data):
-        print(f"Processing image of size: {len(image_data)} bytes")  # Rozmiar obrazu
+        logger.info(f"Processing image of size: {len(image_data)} bytes")
         try:
             img = Image.open(io.BytesIO(image_data))
-            print(f"Image opened successfully, format: {img.format}")  # Szczegóły obrazu
+            logger.info(f"Image opened successfully, format: {img.format}")
 
             transaction = Transaction(image_data, "image")
-            print(f"Created image transaction")  # Szczegóły transakcji
+            logger.info("Created image transaction")
 
             if self.broadcast_transaction(transaction):
                 self.add_transaction(transaction)
-                print("Image transaction added and broadcasted successfully")  # Sukces
+                logger.info("Image transaction added and broadcasted successfully")
                 return True
-            print("Image transaction broadcasting failed")  # Niepowodzenie
+            logger.warning("Image transaction broadcasting failed")
             return False
         except Exception as e:
-            print(f"Error processing image: {e}")  # Log błędu
+            logger.error(f"Error processing image: {e}")
             return False
-
     
-    def verify_block(self, block):
-        # Verify block hash
-        if block.hash[:self.difficulty] != "0" * self.difficulty:
+def verify_block(self, block):
+    # Verify block hash
+    if block.hash[:self.difficulty] != "0" * self.difficulty:
+        return False
+
+    # Verify transactions
+    for transaction in block.transactions:
+        if not transaction.verify_crc():
             return False
-        
-        # Verify transactions
-        for transaction in block.transactions:
-            if not transaction.verify_crc():
-                return False
-        
-        return True
 
+    return True
 
-    def mine_pending_transactions(self):
-        if not self.pending_transactions:
-            print("No pending transactions to mine")  # Brak transakcji
-            return {"success": False, "message": "No pending transactions to mine"}
+def mine_pending_transactions(self):
+    if not self.pending_transactions:
+        logger.warning("No pending transactions to mine")
+        return {"success": False, "message": "No pending transactions to mine"}
 
-        with self.lock:
-            try:
-                self.mining_status["is_mining"] = True
-                self.mining_status["progress"] = 0
-                print("Mining started")  # Start procesu kopania
+    with self.lock:
+        try:
+            self.mining_status["is_mining"] = True
+            self.mining_status["progress"] = 0
+            logger.info("Mining started")
 
-                block = Block(
-                    len(self.chain),
-                    self.get_latest_block().hash,
-                    self.pending_transactions
-                )
-                print(f"Mining block: Index={block.index}")  # Szczegóły bloku
+            block = Block(
+                len(self.chain),
+                self.get_latest_block().hash,
+                self.pending_transactions
+            )
+            logger.info(f"Mining block: Index={block.index}")
 
-                # Update mining progress
-                self.mining_status["progress"] = 50
-                block.mine_block(self.difficulty)
-                print(f"Block mined: Hash={block.hash}, Nonce={block.nonce}")  # Sukces kopania
+            # Update mining progress
+            self.mining_status["progress"] = 50
+            block.mine_block(self.difficulty)
+            logger.info(f"Block mined: Hash={block.hash}, Nonce={block.nonce}")
 
-                if not self.verify_block(block):
-                    print("Block verification failed")  # Niepowodzenie weryfikacji
-                    return {"success": False, "message": "Block verification failed"}
+            if not self.verify_block(block):
+                logger.error("Block verification failed")
+                return {"success": False, "message": "Block verification failed"}
 
-                self.mining_status["progress"] = 75
-                self.chain.append(block)
-                self.pending_transactions = []
-                self.mining_status["progress"] = 100
-                print("Block successfully added to the chain")  # Dodano blok
-                return {
-                    "success": True,
-                    "message": "Block mined successfully",
-                    "block": {
-                        "index": block.index,
-                        "hash": block.hash,
-                        "transaction_count": len(block.transactions)
-                    }
+            self.mining_status["progress"] = 75
+            self.chain.append(block)
+            self.pending_transactions = []
+            self.mining_status["progress"] = 100
+            logger.info("Block successfully added to the chain")
+            return {
+                "success": True,
+                "message": "Block mined successfully",
+                "block": {
+                    "index": block.index,
+                    "hash": block.hash,
+                    "transaction_count": len(block.transactions)
                 }
-            except Exception as e:
-                print(f"Error during mining: {e}")  # Log błędu
-                return {"success": False, "message": f"Mining failed: {str(e)}"}
-            finally:
-                self.mining_status["is_mining"] = False
-
-
+            }
+        except Exception as e:
+            logger.exception(f"Error during mining: {e}")
+            return {"success": False, "message": f"Mining failed: {str(e)}"}
+        finally:
+            self.mining_status["is_mining"] = False
 
 def create_blockchain_app():
     app = Flask(__name__)
-    blockchain = BlockchainNode("node1")  # Node ID will be set during initialization
+    blockchain = BlockchainNode("node1")
 
     @app.route('/transaction/new', methods=['POST'])
     def new_transaction():
         values = request.get_json()
-        print(f"Received new transaction request: {values}")  # Otrzymane dane wejściowe
+        logger.info(f"Received new transaction request: {values}")
 
         try:
             transaction = Transaction(values['data'], values.get('type', 'generic'))
-            print(f"Created transaction")  # Log stworzonych danych transakcji
+            logger.info("Created transaction")
 
             if blockchain.broadcast_transaction(transaction):
                 blockchain.add_transaction(transaction)
-                print("Transaction successfully added and broadcasted")  # Sukces
+                logger.info("Transaction successfully added and broadcasted")
                 return jsonify({'message': 'Transaction added successfully!'}), 201
-            print("Transaction rejected by the network")  # Odrzucone przez sieć
+            logger.warning("Transaction rejected by the network")
             return jsonify({'message': 'Transaction rejected by network'}), 400
         except Exception as e:
-            print(f"Error in new_transaction: {e}")  # Log błędu
+            logger.exception(f"Error in new_transaction: {e}")
             return jsonify({'message': str(e)}), 400
 
     @app.route('/verify_transaction', methods=['POST'])
     def verify_transaction():
         transaction_data = request.get_json()
-        print(f"Transaction received for verification")  # Otrzymane dane
+        logger.info("Transaction received for verification")
 
         if blockchain.verify_transaction(transaction_data):
-            print("Transaction verified successfully")  # Sukces weryfikacji
+            logger.info("Transaction verified successfully")
             return jsonify({'message': 'Transaction verified'}), 200
-        print("Transaction verification failed")  # Weryfikacja nie powiodła się
+        logger.warning("Transaction verification failed")
         return jsonify({'message': 'Transaction verification failed'}), 400
-
-
 
     @app.route('/image/process', methods=['POST'])
     def process_image():
         try:
-            # Check if request contains any files
             if not request.files:
+                logger.error("No files uploaded in the request")
                 return jsonify({
                     'error': 'NO_FILES',
                     'message': 'No files were uploaded in the request',
                     'details': 'Request must include multipart/form-data with an image file'
                 }), 400
 
-            # Check if image field exists
             if 'image' not in request.files:
+                logger.error("No image field found in the request")
                 return jsonify({
                     'error': 'NO_IMAGE_FIELD',
                     'message': 'No image field found in the request',
@@ -365,32 +363,33 @@ def create_blockchain_app():
 
             image_file = request.files['image']
 
-            # Check if filename is empty
             if image_file.filename == '':
+                logger.error("Uploaded file has no filename")
                 return jsonify({
                     'error': 'EMPTY_FILENAME',
                     'message': 'Submitted file has no filename',
                     'details': 'The uploaded file must have a valid filename'
                 }), 400
 
-            # Read image data
             try:
                 image_data = image_file.read()
                 if not image_data:
+                    logger.error("Uploaded file is empty")
                     return jsonify({
                         'error': 'EMPTY_FILE',
                         'message': 'Uploaded file is empty',
                         'details': f'File size: {len(image_data)} bytes'
                     }), 400
             except Exception as e:
+                logger.exception("Failed to read uploaded file")
                 return jsonify({
                     'error': 'FILE_READ_ERROR',
                     'message': 'Failed to read uploaded file',
                     'details': str(e)
                 }), 400
 
-            # Process the image
             if blockchain.process_image(image_data):
+                logger.info("Image processed successfully")
                 return jsonify({
                     'success': True,
                     'message': 'Image processed successfully',
@@ -401,6 +400,7 @@ def create_blockchain_app():
                     }
                 }), 200
             else:
+                logger.error("Image processing failed")
                 return jsonify({
                     'error': 'PROCESSING_FAILED',
                     'message': 'Image processing failed',
@@ -408,18 +408,17 @@ def create_blockchain_app():
                 }), 400
 
         except Exception as e:
+            logger.exception("An unexpected error occurred during image processing")
             return jsonify({
                 'error': 'INTERNAL_ERROR',
                 'message': 'An unexpected error occurred',
                 'details': str(e)
             }), 500
 
-
-
     @app.route('/mine', methods=['GET'])
     def mine():
-        # Check if already mining
         if blockchain.mining_status["is_mining"]:
+            logger.warning("Mining already in progress")
             return jsonify({
                 'success': False,
                 'message': 'Mining already in progress',
@@ -427,29 +426,28 @@ def create_blockchain_app():
                 'confirmations': len(blockchain.pending_transactions)
             }), 409
 
-        # Mine the block
         result = blockchain.mine_pending_transactions()
-        
+
         if result["success"]:
-            # After successful mining, resolve conflicts with other nodes
-            print("Starting consensus resolution after mining")
+            logger.info("Starting consensus resolution after mining")
             was_chain_replaced = blockchain.resolve_conflicts()
-            
-            # Broadcast the new block to all nodes
+
             for node in blockchain.nodes:
                 try:
                     requests.get(f'http://{node}/blockchain/nodes/resolve', timeout=5)
+                    logger.info(f"Notified node {node} about the new chain")
                 except requests.exceptions.RequestException as e:
-                    print(f"Error notifying node {node}: {e}")
+                    logger.error(f"Error notifying node {node}: {e}")
 
             result["chain_status"] = "replaced" if was_chain_replaced else "authoritative"
             return jsonify(result), 200
         else:
+            logger.error("Mining failed")
             return jsonify(result), 400
-        
 
     @app.route('/chain', methods=['GET'])
     def get_chain():
+        logger.info("Fetching the blockchain")
         response = {
             'chain': [
                 {
@@ -465,33 +463,32 @@ def create_blockchain_app():
             'length': len(blockchain.chain)
         }
         return jsonify(response), 200
-    
 
     @app.route('/simulate/failure', methods=['POST'])
     def simulate_failure():
-        """Simulate node failure"""
         data = request.get_json()
         failure_type = data.get('type', 'node_down')
-        
+        logger.warning(f"Simulating failure of type: {failure_type}")
+
         if failure_type == 'node_down':
-            # Simulate complete node failure
+            logger.critical("Simulating node down failure. Exiting process.")
             os._exit(1)
-        
         elif failure_type == 'network_delay':
-            # Simulate network latency
+            logger.info("Simulating network delay")
             time.sleep(10)
-            return jsonify({'message': 'Network delay simulated'})
-        
+            return jsonify({'message': 'Network delay simulated'}), 200
         elif failure_type == 'data_corruption':
-            # Simulate CRC corruption
+            logger.warning("Simulating data corruption")
             for transaction in blockchain.pending_transactions:
                 transaction.crc = 'corrupted'
-            return jsonify({'message': 'Data corruption simulated'})
-            
-        return jsonify({'message': 'Unknown failure type'})
+            return jsonify({'message': 'Data corruption simulated'}), 200
+
+        logger.error("Unknown failure type provided")
+        return jsonify({'message': 'Unknown failure type'}), 400
 
     @app.route('/nodes/resolve', methods=['GET'])
     def consensus():
+        logger.info("Starting consensus resolution")
         replaced = blockchain.resolve_conflicts()
         chain_data = [{
             'index': block.index,
@@ -500,6 +497,11 @@ def create_blockchain_app():
             'timestamp': block.timestamp,
             'hash': block.hash
         } for block in blockchain.chain]
+
+        if replaced:
+            logger.info("Chain was replaced with a longer valid chain")
+        else:
+            logger.info("Current chain is authoritative")
 
         return jsonify({
             'message': 'Chain was replaced' if replaced else 'Chain is authoritative',
