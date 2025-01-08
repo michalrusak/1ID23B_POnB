@@ -89,7 +89,8 @@ class Block:
             self.hash = self.calculate_hash()
 
 def generate_node_addresses(start_port, num_nodes):
-    return [f"http://localhost:{start_port + i}" for i in range(1, num_nodes)]
+    # Używamy nazw serwisów z docker-compose zamiast localhost
+    return [f"http://node{i}:{5000 + i}" for i in range(1, num_nodes + 1)]
 
 class BlockchainNode:
     def __init__(self, node_id, start_port=5001, num_nodes=6, difficulty=2):
@@ -97,9 +98,57 @@ class BlockchainNode:
         self.chain = [self.create_genesis_block()]
         self.difficulty = difficulty
         self.pending_transactions = []
-        self.nodes = generate_node_addresses(start_port, num_nodes)
+        # Generowanie adresów węzłów używając nazw serwisów Docker
+        self.nodes = self.generate_docker_node_addresses(num_nodes)
         self.lock = threading.Lock()
         self.mining_status = {"is_mining": False, "progress": 0}
+
+    def generate_docker_node_addresses(self, num_nodes):
+        """Generuje adresy węzłów używając nazw serwisów Docker"""
+        node_addresses = []
+        for i in range(1, num_nodes + 1):
+            # Pomijamy bieżący węzeł przy generowaniu listy innych węzłów
+            if f"node{i}" != self.node_id:
+                node_addresses.append(f"http://node{i}:500{i}")
+        return node_addresses
+
+    def broadcast_transaction(self, transaction):
+        """Broadcast transaction to other nodes"""
+        logger.info("Broadcasting transaction")
+        logger.info(f"Current node: {self.node_id}")
+        logger.info(f"Broadcasting to nodes: {self.nodes}")
+
+        def confirm_with_node(node_address):
+            try:
+                logger.info(f"Contacting node: {node_address}")
+                response = requests.post(
+                    f"{node_address}/blockchain/verify_transaction",
+                    json=transaction.to_dict(),
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    logger.info(f"Node {node_address} confirmed transaction")
+                    return node_address
+                else:
+                    logger.warning(f"Node {node_address} rejected transaction with status {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error contacting node {node_address}: {e}")
+            return None
+
+        nodes_contacted = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(confirm_with_node, node) for node in self.nodes]
+            confirmations = set()
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    confirmations.add(result)
+                    nodes_contacted.append(result)
+
+        logger.info(f"Nodes contacted: {nodes_contacted}")
+        required_confirmations = (len(self.nodes) * 2) // 3
+        logger.info(f"Confirmations: {len(confirmations)} / {len(self.nodes)} required: {required_confirmations}")
+        return len(confirmations) >= required_confirmations
 
     def is_chain_valid(self, chain):
         """Verify if a given chain is valid"""
@@ -139,7 +188,11 @@ class BlockchainNode:
         # Get and verify chains from all nodes
         for node in self.nodes:
             try:
-                response = requests.get(f'http://{node}/blockchain/chain', timeout=5)
+                logger.info(f"Contacting node: {node}")
+                logger.info(f'{node}/blockchain/chain')
+                response = requests.get(f'{node}/blockchain/chain', timeout=5)
+                logger.info(f"Response status: {response.status_code}")
+                logger.info(f"Response data: {response.json()}")
                 if response.status_code == 200:
                     chain_data = response.json()
                     chain_length = chain_data['length']
@@ -189,39 +242,6 @@ class BlockchainNode:
         with self.lock:
             self.pending_transactions.append(transaction)
 
-    def broadcast_transaction(self, transaction):
-        logger.info("Broadcasting transaction")
-
-        def confirm_with_node(node_address):
-            try:
-                logger.info(f"Contacting node: {node_address}")
-                response = requests.post(
-                    f'http://{node_address}/blockchain/verify_transaction',
-                    json=transaction.to_dict(),
-                    timeout=5
-                )
-                if response.status_code == 200:
-                    logger.info(f"Node {node_address} confirmed transaction")
-                    return node_address
-                else:
-                    logger.warning(f"Node {node_address} rejected transaction with status {response.status_code}")
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error contacting node {node_address}: {e}")
-            return None
-
-        nodes_contacted = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(confirm_with_node, node) for node in self.nodes]
-            confirmations = set()
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    confirmations.add(result)
-                    nodes_contacted.append(result)
-
-        logger.info(f"Nodes contacted: {nodes_contacted}")
-        logger.info(f"Confirmations: {len(confirmations)} / {len(self.nodes)} required: {len(self.nodes) * 2 // 3}")
-        return len(confirmations) >= len(self.nodes) * 2 // 3
 
 
     def verify_transaction(self, transaction_data):
@@ -234,86 +254,119 @@ class BlockchainNode:
         return True
 
     def process_image(self, image_data):
-        logger.info(f"Processing image of size: {len(image_data)} bytes")
+        """Complete image processing pipeline"""
+        logger.info("Starting image processing pipeline")
+        
         try:
-            img = Image.open(io.BytesIO(image_data))
-            logger.info(f"Image opened successfully, format: {img.format}")
-
+            # 1. Create transaction and get initial CRC
             transaction = Transaction(image_data, "image")
-            logger.info("Created image transaction")
-
-            if self.broadcast_transaction(transaction):
-                self.add_transaction(transaction)
-                logger.info("Image transaction added and broadcasted successfully")
-                return True
-            logger.warning("Image transaction broadcasting failed")
-            return False
-        except Exception as e:
-            logger.error(f"Error processing image: {e}")
-            return False
-    
-def verify_block(self, block):
-    # Verify block hash
-    if block.hash[:self.difficulty] != "0" * self.difficulty:
-        return False
-
-    # Verify transactions
-    for transaction in block.transactions:
-        if not transaction.verify_crc():
-            return False
-
-    return True
-
-def mine_pending_transactions(self):
-    if not self.pending_transactions:
-        logger.warning("No pending transactions to mine")
-        return {"success": False, "message": "No pending transactions to mine"}
-
-    with self.lock:
-        try:
-            self.mining_status["is_mining"] = True
-            self.mining_status["progress"] = 0
-            logger.info("Mining started")
-
-            block = Block(
-                len(self.chain),
-                self.get_latest_block().hash,
-                self.pending_transactions
-            )
-            logger.info(f"Mining block: Index={block.index}")
-
-            # Update mining progress
-            self.mining_status["progress"] = 50
-            block.mine_block(self.difficulty)
-            logger.info(f"Block mined: Hash={block.hash}, Nonce={block.nonce}")
-
-            if not self.verify_block(block):
-                logger.error("Block verification failed")
-                return {"success": False, "message": "Block verification failed"}
-
-            self.mining_status["progress"] = 75
-            self.chain.append(block)
-            self.pending_transactions = []
-            self.mining_status["progress"] = 100
-            logger.info("Block successfully added to the chain")
+            initial_crc = transaction.calculate_crc()
+            logger.info(f"Initial CRC: {initial_crc}")
+            
+            # 2. Verify transaction
+            if not transaction.verify_crc():
+                raise ValueError("Initial CRC verification failed")
+            
+            # 3. Broadcast to network and collect confirmations
+            confirmation_result = self.broadcast_transaction(transaction)
+            if not confirmation_result:
+                raise ValueError("Failed to get network consensus")
+            
+            # 4. Add to pending transactions
+            self.add_transaction(transaction)
+            
+            # 5. Mine block automatically
+            mining_result = self.mine_pending_transactions()
+            if not mining_result["success"]:
+                raise ValueError("Mining failed")
+            
+            # 6. Resolve conflicts across network
+            self.resolve_conflicts()
+            
+            # 7. Verify final state
+            final_block = self.get_latest_block()
+            stored_transaction = final_block.transactions[-1]
+            if not stored_transaction.verify_crc():
+                raise ValueError("Final CRC verification failed")
+                
             return {
                 "success": True,
-                "message": "Block mined successfully",
-                "block": {
-                    "index": block.index,
-                    "hash": block.hash,
-                    "transaction_count": len(block.transactions)
-                }
+                "initial_crc": initial_crc,
+                "final_crc": stored_transaction.crc,
+                "block_index": final_block.index,
+                "confirmations": len(stored_transaction.confirmations)
             }
+            
         except Exception as e:
-            logger.exception(f"Error during mining: {e}")
-            return {"success": False, "message": f"Mining failed: {str(e)}"}
-        finally:
-            self.mining_status["is_mining"] = False
+            logger.error(f"Image processing pipeline failed: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+          
+    def verify_block(self, block):
+        # Verify block hash
+        if block.hash[:self.difficulty] != "0" * self.difficulty:
+            return False
+
+        # Verify transactions
+        for transaction in block.transactions:
+            if not transaction.verify_crc():
+                return False
+
+        return True
+
+    def mine_pending_transactions(self):
+        if not self.pending_transactions:
+            logger.warning("No pending transactions to mine")
+            return {"success": False, "message": "No pending transactions to mine"}
+
+        with self.lock:
+            try:
+                self.mining_status["is_mining"] = True
+                self.mining_status["progress"] = 0
+                logger.info("Mining started")
+
+                block = Block(
+                    len(self.chain),
+                    self.get_latest_block().hash,
+                    self.pending_transactions
+                )
+                logger.info(f"Mining block: Index={block.index}")
+
+                # Update mining progress
+                self.mining_status["progress"] = 50
+                block.mine_block(self.difficulty)
+                logger.info(f"Block mined: Hash={block.hash}, Nonce={block.nonce}")
+
+                if not self.verify_block(block):
+                    logger.error("Block verification failed")
+                    return {"success": False, "message": "Block verification failed"}
+
+                self.mining_status["progress"] = 75
+                self.chain.append(block)
+                self.pending_transactions = []
+                self.mining_status["progress"] = 100
+                logger.info("Block successfully added to the chain")
+                return {
+                    "success": True,
+                    "message": "Block mined successfully",
+                    "block": {
+                        "index": block.index,
+                        "hash": block.hash,
+                        "transaction_count": len(block.transactions)
+                    }
+                }
+            except Exception as e:
+                logger.exception(f"Error during mining: {e}")
+                return {"success": False, "message": f"Mining failed: {str(e)}"}
+            finally:
+                self.mining_status["is_mining"] = False
 
 def create_blockchain_app():
     app = Flask(__name__)
-    blockchain = BlockchainNode("node1")
+    node_id = os.getenv('NODE_ID', 'node1')
+    blockchain = BlockchainNode(node_id=node_id)
 
     @app.route('/transaction/new', methods=['POST'])
     def new_transaction():
@@ -348,76 +401,31 @@ def create_blockchain_app():
     @app.route('/image/process', methods=['POST'])
     def process_image():
         try:
-            if not request.files:
-                logger.error("No files uploaded in the request")
-                return jsonify({
-                    'error': 'NO_FILES',
-                    'message': 'No files were uploaded in the request',
-                    'details': 'Request must include multipart/form-data with an image file'
-                }), 400
-
             if 'image' not in request.files:
-                logger.error("No image field found in the request")
-                return jsonify({
-                    'error': 'NO_IMAGE_FIELD',
-                    'message': 'No image field found in the request',
-                    'details': 'Form data must contain a field named "image"'
-                }), 400
-
+                return jsonify({'error': 'No image file provided'}), 400
+                
             image_file = request.files['image']
-
-            if image_file.filename == '':
-                logger.error("Uploaded file has no filename")
-                return jsonify({
-                    'error': 'EMPTY_FILENAME',
-                    'message': 'Submitted file has no filename',
-                    'details': 'The uploaded file must have a valid filename'
-                }), 400
-
-            try:
-                image_data = image_file.read()
-                if not image_data:
-                    logger.error("Uploaded file is empty")
-                    return jsonify({
-                        'error': 'EMPTY_FILE',
-                        'message': 'Uploaded file is empty',
-                        'details': f'File size: {len(image_data)} bytes'
-                    }), 400
-            except Exception as e:
-                logger.exception("Failed to read uploaded file")
-                return jsonify({
-                    'error': 'FILE_READ_ERROR',
-                    'message': 'Failed to read uploaded file',
-                    'details': str(e)
-                }), 400
-
-            if blockchain.process_image(image_data):
-                logger.info("Image processed successfully")
+            image_data = image_file.read()
+            
+            # Uruchom cały pipeline
+            result = blockchain.process_image(image_data)
+            
+            if result["success"]:
                 return jsonify({
                     'success': True,
-                    'message': 'Image processed successfully',
-                    'details': {
-                        'file_size': len(image_data),
-                        'filename': image_file.filename,
-                        'content_type': image_file.content_type
-                    }
+                    'message': 'Image successfully stored in blockchain',
+                    'details': result
                 }), 200
             else:
-                logger.error("Image processing failed")
                 return jsonify({
-                    'error': 'PROCESSING_FAILED',
-                    'message': 'Image processing failed',
-                    'details': 'The blockchain network rejected the image transaction'
+                    'success': False,
+                    'error': result["error"]
                 }), 400
-
+                
         except Exception as e:
-            logger.exception("An unexpected error occurred during image processing")
-            return jsonify({
-                'error': 'INTERNAL_ERROR',
-                'message': 'An unexpected error occurred',
-                'details': str(e)
-            }), 500
-
+            logger.exception("Image processing failed")
+            return jsonify({'error': str(e)}), 500
+    
     @app.route('/mine', methods=['GET'])
     def mine():
         if blockchain.mining_status["is_mining"]:

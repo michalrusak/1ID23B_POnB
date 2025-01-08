@@ -65,7 +65,7 @@ def start_network(num_nodes=6, start_port=5001):
     
     for i in range(num_nodes):
         port = start_port + i
-        process = multiprocessing.Process(target=start_node, args=(port,))
+        process = multiprocessing.Process(target=start_node, args=(port))
         process.start()
         processes.append(process)
 
@@ -92,4 +92,5 @@ if __name__ == '__main__':
 
 
 def generate_node_addresses(start_port, num_nodes):
-    return [f"http://localhost:{start_port + i}" for i in range(1, num_nodes)]
+    # Używamy nazw serwisów z docker-compose zamiast localhost
+    return [f"http://node{i}:{5000 + i}" for i in range(1, num_nodes + 1)]
