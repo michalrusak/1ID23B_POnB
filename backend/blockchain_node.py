@@ -113,7 +113,7 @@ class BlockchainNode:
         return node_addresses
 
     def broadcast_transaction(self, transaction):
-        """Broadcast transaction to other nodes"""
+        """Broadcast transaction to other nodes and collect confirmations"""
         logger.info("Broadcasting transaction")
         logger.info(f"Current node: {self.node_id}")
         logger.info(f"Broadcasting to nodes: {self.nodes}")
@@ -128,6 +128,8 @@ class BlockchainNode:
                 )
                 if response.status_code == 200:
                     logger.info(f"Node {node_address} confirmed transaction")
+                    # Dodaj potwierdzenie do transakcji
+                    transaction.confirmations.add(node_address)
                     return node_address
                 else:
                     logger.warning(f"Node {node_address} rejected transaction with status {response.status_code}")
@@ -135,7 +137,6 @@ class BlockchainNode:
                 logger.error(f"Error contacting node {node_address}: {e}")
             return None
 
-        nodes_contacted = []
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(confirm_with_node, node) for node in self.nodes]
             confirmations = set()
@@ -143,12 +144,15 @@ class BlockchainNode:
                 result = future.result()
                 if result:
                     confirmations.add(result)
-                    nodes_contacted.append(result)
 
-        logger.info(f"Nodes contacted: {nodes_contacted}")
-        required_confirmations = (len(self.nodes) * 2) // 3
-        logger.info(f"Confirmations: {len(confirmations)} / {len(self.nodes)} required: {required_confirmations}")
-        return len(confirmations) >= required_confirmations
+        # Dodaj własne potwierdzenie
+        transaction.confirmations.add(f"http://{self.node_id}:5001")
+        
+        # required_confirmations = (len(self.nodes) + 1) // 2  # +1 aby uwzględnić bieżący węzeł
+        required_confirmations = 6
+        logger.info(f"Confirmations: {len(transaction.confirmations)} / {len(self.nodes) + 1} required: {required_confirmations}")
+        return len(transaction.confirmations) >= required_confirmations
+
 
     def is_chain_valid(self, chain):
         """Verify if a given chain is valid"""
@@ -246,12 +250,20 @@ class BlockchainNode:
 
     def verify_transaction(self, transaction_data):
         """Verify a transaction received from another node"""
-        transaction = Transaction.from_dict(transaction_data)
-        if not transaction.verify_crc():
+        try:
+            transaction = Transaction.from_dict(transaction_data)
+            if not transaction.verify_crc():
+                return False
+            
+            # Dodaj potwierdzenie bieżącego węzła
+            transaction.confirmations.add(f"http://{self.node_id}:5001")
+            
+            # Dodaj do pending transactions jeśli weryfikacja się powiodła
+            self.add_transaction(transaction)
+            return True
+        except Exception as e:
+            logger.error(f"Transaction verification failed: {e}")
             return False
-        
-        # Additional verification logic can be added here
-        return True
 
     def process_image(self, image_data):
         """Complete image processing pipeline"""
@@ -272,29 +284,20 @@ class BlockchainNode:
             if not confirmation_result:
                 raise ValueError("Failed to get network consensus")
             
-            # 4. Add to pending transactions
-            self.add_transaction(transaction)
+            # 4. Add to pending transactions (if not already added by verify_transaction)
+            if transaction not in self.pending_transactions:
+                self.add_transaction(transaction)
             
-            # 5. Mine block automatically
+            # 5. Mine block automatically if we have enough confirmations
             mining_result = self.mine_pending_transactions()
-            if not mining_result["success"]:
-                raise ValueError("Mining failed")
             
-            # 6. Resolve conflicts across network
-            self.resolve_conflicts()
-            
-            # 7. Verify final state
-            final_block = self.get_latest_block()
-            stored_transaction = final_block.transactions[-1]
-            if not stored_transaction.verify_crc():
-                raise ValueError("Final CRC verification failed")
-                
             return {
                 "success": True,
                 "initial_crc": initial_crc,
-                "final_crc": stored_transaction.crc,
-                "block_index": final_block.index,
-                "confirmations": len(stored_transaction.confirmations)
+                "final_crc": transaction.crc,
+                "confirmations": len(transaction.confirmations),
+                "mining_status": mining_result.get("status", "pending"),
+                "mining_message": mining_result.get("message", "Transaction added to pending pool")
             }
             
         except Exception as e:
@@ -317,40 +320,66 @@ class BlockchainNode:
         return True
 
     def mine_pending_transactions(self):
-        if not self.pending_transactions:
-            logger.warning("No pending transactions to mine")
-            return {"success": False, "message": "No pending transactions to mine"}
-
         with self.lock:
+            if not self.pending_transactions:
+                return {
+                    "success": False,
+                    "message": "No pending transactions to mine",
+                    "status": "idle"
+                }
+
             try:
                 self.mining_status["is_mining"] = True
                 self.mining_status["progress"] = 0
-                logger.info("Mining started")
+                logger.info(f"Mining started with {len(self.pending_transactions)} transactions")
+
+                # Filtruj transakcje z wystarczającą liczbą potwierdzeń
+                required_confirmations = (len(self.nodes) + 1) // 2
+                valid_transactions = [
+                    tx for tx in self.pending_transactions 
+                    if len(tx.confirmations) >= required_confirmations
+                ]
+
+                if not valid_transactions:
+                    return {
+                        "success": False,
+                        "message": "No transactions with sufficient confirmations",
+                        "status": "waiting_for_confirmations"
+                    }
 
                 block = Block(
                     len(self.chain),
                     self.get_latest_block().hash,
-                    self.pending_transactions
+                    valid_transactions
                 )
+                
                 logger.info(f"Mining block: Index={block.index}")
-
-                # Update mining progress
                 self.mining_status["progress"] = 50
                 block.mine_block(self.difficulty)
-                logger.info(f"Block mined: Hash={block.hash}, Nonce={block.nonce}")
-
+                
                 if not self.verify_block(block):
-                    logger.error("Block verification failed")
-                    return {"success": False, "message": "Block verification failed"}
+                    return {
+                        "success": False,
+                        "message": "Block verification failed",
+                        "status": "error"
+                    }
 
                 self.mining_status["progress"] = 75
                 self.chain.append(block)
-                self.pending_transactions = []
+                
+                # Usuń tylko przetworzone transakcje
+                self.pending_transactions = [
+                    tx for tx in self.pending_transactions 
+                    if tx not in valid_transactions
+                ]
+                
                 self.mining_status["progress"] = 100
                 logger.info("Block successfully added to the chain")
+                
                 return {
                     "success": True,
                     "message": "Block mined successfully",
+                    "status": "completed",
                     "block": {
                         "index": block.index,
                         "hash": block.hash,
@@ -359,7 +388,11 @@ class BlockchainNode:
                 }
             except Exception as e:
                 logger.exception(f"Error during mining: {e}")
-                return {"success": False, "message": f"Mining failed: {str(e)}"}
+                return {
+                    "success": False,
+                    "message": f"Mining failed: {str(e)}",
+                    "status": "error"
+                }
             finally:
                 self.mining_status["is_mining"] = False
 
@@ -428,33 +461,58 @@ def create_blockchain_app():
     
     @app.route('/mine', methods=['GET'])
     def mine():
+        # Sprawdź czy są jakieś transakcje oczekujące
+        if not blockchain.pending_transactions:
+            return jsonify({
+                'success': False,
+                'message': 'No pending transactions to mine',
+                'status': 'idle'
+            }), 200  # Zmiana kodu odpowiedzi na 200, bo to nie jest błąd
+
+        # Sprawdź czy mining już trwa
         if blockchain.mining_status["is_mining"]:
-            logger.warning("Mining already in progress")
             return jsonify({
                 'success': False,
                 'message': 'Mining already in progress',
                 'progress': blockchain.mining_status["progress"],
-                'confirmations': len(blockchain.pending_transactions)
+                'status': 'mining'
             }), 409
 
         result = blockchain.mine_pending_transactions()
-
+        
         if result["success"]:
             logger.info("Starting consensus resolution after mining")
             was_chain_replaced = blockchain.resolve_conflicts()
 
+            # Powiadom inne węzły tylko jeśli mining się powiódł
             for node in blockchain.nodes:
                 try:
-                    requests.get(f'http://{node}/blockchain/nodes/resolve', timeout=5)
+                    requests.get(f'{node}/nodes/resolve', timeout=5)
                     logger.info(f"Notified node {node} about the new chain")
                 except requests.exceptions.RequestException as e:
                     logger.error(f"Error notifying node {node}: {e}")
 
-            result["chain_status"] = "replaced" if was_chain_replaced else "authoritative"
+            result.update({
+                "chain_status": "replaced" if was_chain_replaced else "authoritative",
+                "status": "completed"
+            })
             return jsonify(result), 200
         else:
+            # Jeśli mining się nie powiódł, ale to nie był błąd (np. brak wystarczających potwierdzeń)
+            if "No transactions with sufficient confirmations" in result.get("message", ""):
+                return jsonify({
+                    'success': False,
+                    'message': result["message"],
+                    'status': 'waiting_for_confirmations'
+                }), 200
+            
+            # Rzeczywisty błąd
             logger.error("Mining failed")
-            return jsonify(result), 400
+            return jsonify({
+                'success': False,
+                'message': result["message"],
+                'status': 'error'
+            }), 400
 
     @app.route('/chain', methods=['GET'])
     def get_chain():
