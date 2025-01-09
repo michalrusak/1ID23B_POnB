@@ -22,17 +22,34 @@ class Transaction:
         self.timestamp = time.time()
         self.type = transaction_type
         self.crc = self.calculate_crc()
-        self.confirmations = set()  # Set of nodes that confirmed this transaction
+        self.confirmations = set()
+        # Log transaction creation with CRC
+        logger.info(
+            f"Created new transaction - Type: {transaction_type}, CRC: {self.crc}",
+            extra={'node_id': os.getenv('NODE_ID', 'unknown')}
+        )
 
     def calculate_crc(self):
         """Calculate CRC32 checksum for data verification"""
         if isinstance(self.data, bytes):
-            return format(zlib.crc32(self.data) & 0xFFFFFFFF, '08x')
-        return format(zlib.crc32(str(self.data).encode()) & 0xFFFFFFFF, '08x')
+            crc = format(zlib.crc32(self.data) & 0xFFFFFFFF, '08x')
+        else:
+            crc = format(zlib.crc32(str(self.data).encode()) & 0xFFFFFFFF, '08x')
+        logger.info(
+            f"Calculated CRC: {crc} for data type: {type(self.data)}",
+            extra={'node_id': os.getenv('NODE_ID', 'unknown')}
+        )
+        return crc
 
     def verify_crc(self):
         """Verify data integrity using CRC32 checksum"""
-        return self.crc == self.calculate_crc()
+        current_crc = self.calculate_crc()
+        is_valid = self.crc == current_crc
+        logger.info(
+            f"CRC Verification - Stored: {self.crc}, Calculated: {current_crc}, Valid: {is_valid}",
+            extra={'node_id': os.getenv('NODE_ID', 'unknown')}
+        )
+        return is_valid
 
     def to_dict(self):
         if self.type == "image":
@@ -65,12 +82,17 @@ class Transaction:
 
 class Block:
     def __init__(self, index, previous_hash, transactions, timestamp=None):
+        self.node_id = os.getenv('NODE_ID', 'unknown')
         self.index = index
         self.previous_hash = previous_hash
         self.transactions = transactions
         self.timestamp = timestamp or time.time()
         self.nonce = 0
         self.hash = self.calculate_hash()
+        logger.info(
+            f"Created new block - Index: {index}, Previous Hash: {previous_hash}, Initial Hash: {self.hash}",
+            extra={'node_id': self.node_id}
+        )
 
     def calculate_hash(self):
         block_string = json.dumps({
@@ -80,13 +102,35 @@ class Block:
             'timestamp': self.timestamp,
             'nonce': self.nonce
         }, sort_keys=True).encode()
-        return hashlib.sha256(block_string).hexdigest()
+        
+        new_hash = hashlib.sha256(block_string).hexdigest()
+        logger.info(
+            f"Block {self.index} - Calculated hash: {new_hash} (nonce: {self.nonce})",
+            extra={'node_id': self.node_id}
+        )
+        return new_hash
 
     def mine_block(self, difficulty):
         target = '0' * difficulty
+        logger.info(
+            f"Starting mining block {self.index} - Target difficulty: {difficulty}",
+            extra={'node_id': self.node_id}
+        )
+        iterations = 0
         while self.hash[:difficulty] != target:
             self.nonce += 1
             self.hash = self.calculate_hash()
+            iterations += 1
+            if iterations % 1000 == 0:  # Log progress every 1000 iterations
+                logger.info(
+                    f"Mining progress - Block: {self.index}, Nonce: {self.nonce}, Current Hash: {self.hash}",
+                    extra={'node_id': self.node_id}
+                )
+        
+        logger.info(
+            f"Successfully mined block {self.index} - Final Hash: {self.hash}, Nonce: {self.nonce}",
+            extra={'node_id': self.node_id}
+        )
 
 def generate_node_addresses(start_port, num_nodes):
     # Używamy nazw serwisów z docker-compose zamiast localhost
@@ -95,13 +139,44 @@ def generate_node_addresses(start_port, num_nodes):
 class BlockchainNode:
     def __init__(self, node_id, start_port=5001, num_nodes=6, difficulty=2):
         self.node_id = node_id
+        extra = {'node_id': node_id}
+        logger.info(f"Initializing blockchain node", extra=extra)
         self.chain = [self.create_genesis_block()]
         self.difficulty = difficulty
         self.pending_transactions = []
-        # Generowanie adresów węzłów używając nazw serwisów Docker
         self.nodes = self.generate_docker_node_addresses(num_nodes)
         self.lock = threading.Lock()
         self.mining_status = {"is_mining": False, "progress": 0}
+        logger.info(
+            f"Node initialized - Difficulty: {difficulty}, Connected nodes: {len(self.nodes)}",
+            extra=extra
+        )
+
+    def verify_transaction(self, transaction_data):
+        """Verify a transaction received from another node"""
+        logger.info(
+            f"Verifying transaction - CRC: {transaction_data.get('crc')}",
+            extra={'node_id': self.node_id}
+        )
+        try:
+            transaction = Transaction.from_dict(transaction_data)
+            verification_result = transaction.verify_crc()
+            logger.info(
+                f"Transaction verification result - Valid: {verification_result}, "
+                f"CRC: {transaction.crc}",
+                extra={'node_id': self.node_id}
+            )
+            if verification_result:
+                transaction.confirmations.add(f"http://{self.node_id}:5001")
+                self.add_transaction(transaction)
+                return True
+            return False
+        except Exception as e:
+            logger.error(
+                f"Transaction verification failed: {e}",
+                extra={'node_id': self.node_id}
+            )
+            return False
 
     def generate_docker_node_addresses(self, num_nodes):
         """Generuje adresy węzłów używając nazw serwisów Docker"""
@@ -284,24 +359,6 @@ class BlockchainNode:
         with self.lock:
             self.pending_transactions.append(transaction)
 
-
-
-    def verify_transaction(self, transaction_data):
-        """Verify a transaction received from another node"""
-        try:
-            transaction = Transaction.from_dict(transaction_data)
-            if not transaction.verify_crc():
-                return False
-            
-            # Dodaj potwierdzenie bieżącego węzła
-            transaction.confirmations.add(f"http://{self.node_id}:5001")
-            
-            # Dodaj do pending transactions jeśli weryfikacja się powiodła
-            self.add_transaction(transaction)
-            return True
-        except Exception as e:
-            logger.error(f"Transaction verification failed: {e}")
-            return False
 
     def process_image(self, image_data):
         """Complete image processing pipeline"""
@@ -542,6 +599,8 @@ def create_blockchain_app():
             }), 409
 
         result = blockchain.mine_pending_transactions()
+
+        logger.info(result["success"])
         
         if result["success"]:
             logger.info("Starting consensus resolution after mining")
