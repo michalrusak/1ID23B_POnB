@@ -154,6 +154,44 @@ class BlockchainNode:
         return len(transaction.confirmations) >= required_confirmations
 
 
+    def broadcast_mined_block(self, block):
+        """Broadcast mined block to other nodes for verification and consensus"""
+        logger.info(f"Broadcasting mined block {block.index} to network")
+        
+        confirmations = set()
+        block_data = {
+            'index': block.index,
+            'previous_hash': block.previous_hash,
+            'timestamp': block.timestamp,
+            'transactions': [t.to_dict() for t in block.transactions],
+            'hash': block.hash,
+            'nonce': block.nonce
+        }
+
+        def get_node_confirmation(node):
+            try:
+                response = requests.post(
+                    f'{node}/blockchain/verify_mined_block',
+                    json=block_data,
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    logger.info(f"Node {node} confirmed mined block")
+                    return node
+            except Exception as e:
+                logger.error(f"Error getting confirmation from {node}: {e}")
+            return None
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_node = {executor.submit(get_node_confirmation, node): node 
+                            for node in self.nodes}
+            for future in as_completed(future_to_node):
+                if future.result():
+                    confirmations.add(future.result())
+
+        required_confirmations = (len(self.nodes) + 1) // 2
+        return len(confirmations) >= required_confirmations
+
     def is_chain_valid(self, chain):
         """Verify if a given chain is valid"""
         for i in range(1, len(chain)):
@@ -331,8 +369,7 @@ class BlockchainNode:
             try:
                 self.mining_status["is_mining"] = True
                 self.mining_status["progress"] = 0
-                logger.info(f"Mining started with {len(self.pending_transactions)} transactions")
-
+                
                 # Filtruj transakcje z wystarczającą liczbą potwierdzeń
                 required_confirmations = (len(self.nodes) + 1) // 2
                 valid_transactions = [
@@ -353,32 +390,31 @@ class BlockchainNode:
                     valid_transactions
                 )
                 
-                logger.info(f"Mining block: Index={block.index}")
                 self.mining_status["progress"] = 50
                 block.mine_block(self.difficulty)
                 
-                if not self.verify_block(block):
+                # Broadcast wykopanego bloku do sieci
+                if not self.broadcast_mined_block(block):
                     return {
                         "success": False,
-                        "message": "Block verification failed",
-                        "status": "error"
+                        "message": "Failed to get network consensus for mined block",
+                        "status": "consensus_failed"
                     }
 
                 self.mining_status["progress"] = 75
                 self.chain.append(block)
                 
-                # Usuń tylko przetworzone transakcje
+                # Usuń przetworzone transakcje
                 self.pending_transactions = [
                     tx for tx in self.pending_transactions 
                     if tx not in valid_transactions
                 ]
                 
                 self.mining_status["progress"] = 100
-                logger.info("Block successfully added to the chain")
                 
                 return {
                     "success": True,
-                    "message": "Block mined successfully",
+                    "message": "Block mined and confirmed by network",
                     "status": "completed",
                     "block": {
                         "index": block.index,
@@ -386,6 +422,7 @@ class BlockchainNode:
                         "transaction_count": len(block.transactions)
                     }
                 }
+                
             except Exception as e:
                 logger.exception(f"Error during mining: {e}")
                 return {
@@ -419,6 +456,32 @@ def create_blockchain_app():
         except Exception as e:
             logger.exception(f"Error in new_transaction: {e}")
             return jsonify({'message': str(e)}), 400
+        
+
+    @app.route('/verify_mined_block', methods=['POST'])
+    def verify_mined_block():
+        block_data = request.get_json()
+        
+        # Zrekonstruuj blok
+        transactions = [Transaction.from_dict(t) for t in block_data['transactions']]
+        block = Block(
+            block_data['index'],
+            block_data['previous_hash'],
+            transactions,
+            block_data['timestamp']
+        )
+        block.nonce = block_data['nonce']
+        block.hash = block_data['hash']
+        
+        # Weryfikuj blok
+        if not blockchain.verify_block(block):
+            return jsonify({'message': 'Block verification failed'}), 400
+            
+        # Weryfikuj, czy hash spełnia trudność
+        if block.hash[:blockchain.difficulty] != "0" * blockchain.difficulty:
+            return jsonify({'message': 'Block does not meet difficulty requirement'}), 400
+            
+        return jsonify({'message': 'Block verified'}), 200
 
     @app.route('/verify_transaction', methods=['POST'])
     def verify_transaction():
