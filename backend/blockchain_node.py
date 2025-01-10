@@ -356,8 +356,11 @@ class BlockchainNode:
         if not transaction.verify_crc():
             raise ValueError("Transaction CRC verification failed")
         
+        logger.info(f"Adding transaction to pending pool - CRC: {transaction.crc}")
+        
         with self.lock:
             self.pending_transactions.append(transaction)
+            logger.info(f"Transaction added to pending pool - pending_transactions: {len(self.pending_transactions)}")
 
 
     def process_image(self, image_data):
@@ -385,6 +388,9 @@ class BlockchainNode:
             
             # 5. Mine block automatically if we have enough confirmations
             mining_result = self.mine_pending_transactions()
+            
+
+            logger.info("5 w process",mining_result)
             
             return {
                 "success": True,
@@ -415,6 +421,8 @@ class BlockchainNode:
         return True
 
     def mine_pending_transactions(self):
+        logger.info("Starting mining process xxc")
+        logger.info(self.pending_transactions)
         with self.lock:
             if not self.pending_transactions:
                 return {
@@ -581,13 +589,14 @@ def create_blockchain_app():
     
     @app.route('/mine', methods=['GET'])
     def mine():
+        logger.info("Starting mining process")
         # Sprawdź czy są jakieś transakcje oczekujące
-        if not blockchain.pending_transactions:
-            return jsonify({
-                'success': False,
-                'message': 'No pending transactions to mine',
-                'status': 'idle'
-            }), 200  # Zmiana kodu odpowiedzi na 200, bo to nie jest błąd
+        # if not blockchain.pending_transactions:
+        #     return jsonify({
+        #         'success': False,
+        #         'message': 'No pending transactions to mine',
+        #         'status': 'idle'
+        #     }), 200  # Zmiana kodu odpowiedzi na 200, bo to nie jest błąd
 
         # Sprawdź czy mining już trwa
         if blockchain.mining_status["is_mining"]:
@@ -600,6 +609,7 @@ def create_blockchain_app():
 
         result = blockchain.mine_pending_transactions()
 
+        logger.info("tu jest cos", result)
         logger.info(result["success"])
         
         if result["success"]:
@@ -609,7 +619,8 @@ def create_blockchain_app():
             # Powiadom inne węzły tylko jeśli mining się powiódł
             for node in blockchain.nodes:
                 try:
-                    requests.get(f'{node}/nodes/resolve', timeout=5)
+                    logger.info(f"Notifying node {node} about the new chain - resolve")
+                    requests.get(f'{node}/blockchain/nodes/resolve', timeout=5)
                     logger.info(f"Notified node {node} about the new chain")
                 except requests.exceptions.RequestException as e:
                     logger.error(f"Error notifying node {node}: {e}")
