@@ -104,13 +104,10 @@ class Block:
         }, sort_keys=True).encode()
         
         new_hash = hashlib.sha256(block_string).hexdigest()
-        logger.info(
-            f"Block {self.index} - Calculated hash: {new_hash} (nonce: {self.nonce})",
-            extra={'node_id': self.node_id}
-        )
         return new_hash
 
     def mine_block(self, difficulty):
+        logger.info(f"czy tu jestem start minig") 
         target = '0' * difficulty
         logger.info(
             f"Starting mining block {self.index} - Target difficulty: {difficulty}",
@@ -131,6 +128,7 @@ class Block:
             f"Successfully mined block {self.index} - Final Hash: {self.hash}, Nonce: {self.nonce}",
             extra={'node_id': self.node_id}
         )
+        logger.info(f"czy tu jestem end minig") 
 
 def generate_node_addresses(start_port, num_nodes):
     # Używamy nazw serwisów z docker-compose zamiast localhost
@@ -442,6 +440,9 @@ class BlockchainNode:
                     if len(tx.confirmations) >= required_confirmations
                 ]
 
+                logger.info(f"Valid transactions: {len(valid_transactions)}")
+
+
                 if not valid_transactions:
                     return {
                         "success": False,
@@ -454,12 +455,15 @@ class BlockchainNode:
                     self.get_latest_block().hash,
                     valid_transactions
                 )
+
                 
                 self.mining_status["progress"] = 50
                 block.mine_block(self.difficulty)
+
                 
                 # Broadcast wykopanego bloku do sieci
                 if not self.broadcast_mined_block(block):
+                    logger.info("Failed to get network consensus for mined block")
                     return {
                         "success": False,
                         "message": "Failed to get network consensus for mined block",
@@ -468,12 +472,15 @@ class BlockchainNode:
 
                 self.mining_status["progress"] = 75
                 self.chain.append(block)
+
                 
                 # Usuń przetworzone transakcje
                 self.pending_transactions = [
                     tx for tx in self.pending_transactions 
                     if tx not in valid_transactions
                 ]
+
+                logger.info(f"Pending transactions: {len(self.pending_transactions)}")  
                 
                 self.mining_status["progress"] = 100
                 
@@ -526,6 +533,8 @@ def create_blockchain_app():
     @app.route('/verify_mined_block', methods=['POST'])
     def verify_mined_block():
         block_data = request.get_json()
+
+        logger.info("Received mined block for verification")
         
         # Zrekonstruuj blok
         transactions = [Transaction.from_dict(t) for t in block_data['transactions']]
@@ -545,6 +554,8 @@ def create_blockchain_app():
         # Weryfikuj, czy hash spełnia trudność
         if block.hash[:blockchain.difficulty] != "0" * blockchain.difficulty:
             return jsonify({'message': 'Block does not meet difficulty requirement'}), 400
+        
+        blockchain.chain.append(block)
             
         return jsonify({'message': 'Block verified'}), 200
 
@@ -591,13 +602,13 @@ def create_blockchain_app():
     def mine():
         logger.info("Starting mining process")
         # Sprawdź czy są jakieś transakcje oczekujące
-        # if not blockchain.pending_transactions:
-        #     return jsonify({
-        #         'success': False,
-        #         'message': 'No pending transactions to mine',
-        #         'status': 'idle'
-        #     }), 200  # Zmiana kodu odpowiedzi na 200, bo to nie jest błąd
-
+        if not blockchain.pending_transactions:
+            return jsonify({
+                'success': False,
+                'message': 'No pending transactions to mine',
+                'status': 'idle'
+            }), 200  # Zmiana kodu odpowiedzi na 200, bo to nie jest błąd
+        
         # Sprawdź czy mining już trwa
         if blockchain.mining_status["is_mining"]:
             return jsonify({
