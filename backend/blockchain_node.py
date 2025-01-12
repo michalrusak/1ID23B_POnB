@@ -1,4 +1,5 @@
 import os
+import random
 from flask import Flask, jsonify, request
 import hashlib
 import time
@@ -137,18 +138,259 @@ def generate_node_addresses(start_port, num_nodes):
 class BlockchainNode:
     def __init__(self, node_id, start_port=5001, num_nodes=6, difficulty=2):
         self.node_id = node_id
-        extra = {'node_id': node_id}
-        logger.info(f"Initializing blockchain node", extra=extra)
         self.chain = [self.create_genesis_block()]
         self.difficulty = difficulty
         self.pending_transactions = []
         self.nodes = self.generate_docker_node_addresses(num_nodes)
         self.lock = threading.Lock()
         self.mining_status = {"is_mining": False, "progress": 0}
-        logger.info(
-            f"Node initialized - Difficulty: {difficulty}, Connected nodes: {len(self.nodes)}",
-            extra=extra
-        )
+        self.health_check_interval = 30
+        self.failed_nodes = {}
+        self.start_health_check()
+        # Initial synchronization with network
+        self.initial_sync()
+
+    def initial_sync(self):
+        """Perform initial synchronization when node starts"""
+        logger.info(f"Node {self.node_id} performing initial synchronization")
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Get chains from all available nodes
+                longest_chain = None
+                max_length = len(self.chain)
+                
+                for node in self.nodes:
+                    try:
+                        response = requests.get(f'{node}/blockchain/chain', timeout=10)
+                        if response.status_code == 200:
+                            chain_data = response.json()
+                            chain_length = chain_data['length']
+                            
+                            if chain_length > max_length:
+                                # Validate the chain before accepting it
+                                chain = self.reconstruct_chain(chain_data['chain'])
+                                if chain and self.is_chain_valid(chain):
+                                    longest_chain = chain
+                                    max_length = chain_length
+                    except requests.exceptions.RequestException as e:
+                        logger.warning(f"Could not connect to node {node} during initial sync: {e}")
+                        continue
+                
+                if longest_chain:
+                    self.chain = longest_chain
+                    logger.info(f"Initial sync successful - Chain length: {len(self.chain)}")
+                    return True
+                else:
+                    logger.info("No longer valid chain found, keeping genesis block")
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"Error during initial sync (attempt {retry_count + 1}): {e}")
+                retry_count += 1
+                time.sleep(5)  # Wait before retry
+                
+        logger.warning("Initial sync failed after maximum retries")
+        return False
+
+    def reconstruct_chain(self, chain_data):
+        """Reconstructs chain from JSON data with improved validation"""
+        try:
+            reconstructed_chain = []
+            
+            for block_data in chain_data:
+                # Log the block data we're processing
+                logger.info(f"Reconstructing block {block_data['index']}")
+                
+                # Reconstruct transactions with detailed logging
+                transactions = []
+                for tx_data in block_data['transactions']:
+                    try:
+                        tx = Transaction.from_dict(tx_data)
+                        if not tx.verify_crc():
+                            logger.error(f"Transaction CRC verification failed in block {block_data['index']}")
+                            return None
+                        transactions.append(tx)
+                    except Exception as e:
+                        logger.error(f"Error reconstructing transaction in block {block_data['index']}: {e}")
+                        return None
+
+                # Create block
+                block = Block(
+                    block_data['index'],
+                    block_data['previous_hash'],
+                    transactions,
+                    block_data['timestamp']
+                )
+                
+                # Set the hash and nonce from the original block
+                block.hash = block_data['hash']
+                block.nonce = block_data.get('nonce', 0)  # Default to 0 if not present
+                
+                # Verify the reconstructed block
+                if not self.verify_block(block):
+                    logger.error(f"Block validation failed during reconstruction: {block.index}")
+                    logger.error(f"Block hash: {block.hash}")
+                    logger.error(f"Previous hash: {block.previous_hash}")
+                    return None
+                
+                # Verify chain continuity (except for genesis block)
+                if reconstructed_chain and block.previous_hash != reconstructed_chain[-1].hash:
+                    logger.error(f"Chain continuity broken at block {block.index}")
+                    return None
+                
+                reconstructed_chain.append(block)
+                logger.info(f"Successfully reconstructed block {block.index}")
+            
+            return reconstructed_chain
+            
+        except Exception as e:
+            logger.error(f"Error during chain reconstruction: {str(e)}")
+            return None
+
+    def synchronize_node(self, node):
+        """Synchronizes with another node with improved error handling"""
+        logger.info(f"Starting synchronization with node {node}")
+        try:
+            # Get the remote chain
+            chain_response = requests.get(f'{node}/blockchain/chain', timeout=10)
+            if chain_response.status_code != 200:
+                logger.error(f"Failed to get chain from node {node}: {chain_response.status_code}")
+                return False
+                
+            remote_chain_data = chain_response.json()
+            logger.info(f"Received chain data from {node}, length: {remote_chain_data['length']}")
+            
+            # Reconstruct and validate the chain
+            remote_chain = self.reconstruct_chain(remote_chain_data['chain'])
+            if not remote_chain:
+                logger.error(f"Failed to reconstruct chain from {node}")
+                return False
+            
+            # If the remote chain is valid and longer, replace our chain
+            if len(remote_chain) > len(self.chain):
+                with self.lock:
+                    self.chain = remote_chain
+                    logger.info(f"Successfully synchronized with {node}. New chain length: {len(self.chain)}")
+                    return True
+            else:
+                logger.info(f"Remote chain from {node} is not longer than current chain")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error during synchronization with {node}: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error during synchronization with {node}: {str(e)}")
+            return False
+
+    def check_nodes_health(self):
+        """Enhanced health check with better synchronization handling"""
+        logger.info("Starting nodes health check")
+        for node in self.nodes:
+            try:
+                # Check node health
+                response = requests.get(f'{node}/blockchain/health', timeout=5)
+                if response.status_code == 200:
+                    if node in self.failed_nodes:
+                        logger.info(f"Node {node} recovered - initiating sync")
+                        if self.synchronize_node(node):
+                            del self.failed_nodes[node]
+                            logger.info(f"Successfully synchronized with recovered node {node}")
+                        else:
+                            logger.warning(f"Failed to synchronize with recovered node {node}")
+                    else:
+                        # Periodic sync check even for healthy nodes
+                        self.synchronize_node(node)
+                else:
+                    self.handle_node_failure(node)
+            except requests.exceptions.RequestException:
+                self.handle_node_failure(node)
+
+    def handle_node_failure(self, node):
+        """Handle node failure by marking it as failed and initiating recovery"""
+        logger.warning(f"Node {node} is down - marking as failed ---- faillleeeeeeeeeeeeeeed ")
+        if node not in self.failed_nodes:
+            logger.error(f"Node {node} is down - marking as failed")
+            self.failed_nodes[node] = time.time()
+            self.synchronize_node(node)
+
+    def start_health_check(self):
+        logger.info("Starting periodic health check for nodes")
+        """Rozpoczyna okresowe sprawdzanie stanu węzłów"""
+        def health_check():
+            while True:
+                self.check_nodes_health()
+                time.sleep(self.health_check_interval)
+                
+        thread = threading.Thread(target=health_check, daemon=True)
+        thread.start()
+
+
+
+
+    def verify_chain_integrity(self):
+        """Weryfikuje integralność blockchain i naprawia uszkodzenia"""
+        corrupted_blocks = []
+        
+        # Sprawdź każdy blok
+        for i in range(1, len(self.chain)):
+            block = self.chain[i]
+            prev_block = self.chain[i-1]
+            
+            # Sprawdź hash poprzedniego bloku
+            if block.previous_hash != prev_block.hash:
+                corrupted_blocks.append(i)
+                continue
+                
+            # Sprawdź hash aktualnego bloku
+            if block.hash != block.calculate_hash():
+                corrupted_blocks.append(i)
+                continue
+                
+            # Sprawdź transakcje
+            for tx in block.transactions:
+                if not tx.verify_crc():
+                    corrupted_blocks.append(i)
+                    break
+
+        if corrupted_blocks:
+            logger.error(f"Found corrupted blocks: {corrupted_blocks}")
+            self.repair_corrupted_blocks(corrupted_blocks)
+
+    def repair_corrupted_blocks(self, corrupted_indices):
+        """Naprawia uszkodzone bloki poprzez pobranie poprawnych kopii od innych węzłów"""
+        for node in self.nodes:
+            try:
+                # Pobierz kopie bloków od innych węzłów
+                for index in corrupted_indices:
+                    response = requests.get(
+                        f'{node}/blockchain/block/{index}',
+                        timeout=5
+                    )
+                    
+                    if response.status_code == 200:
+                        block_data = response.json()
+                        # Zweryfikuj poprawność bloku
+                        transactions = [Transaction.from_dict(t) for t in block_data['transactions']]
+                        block = Block(
+                            block_data['index'],
+                            block_data['previous_hash'],
+                            transactions,
+                            block_data['timestamp']
+                        )
+                        block.hash = block_data['hash']
+                        block.nonce = block_data['nonce']
+                        
+                        if self.verify_block(block):
+                            self.chain[index] = block
+                            logger.info(f"Successfully repaired block {index}")
+                        
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error getting block from node {node}: {e}")
+                continue
 
     def verify_transaction(self, transaction_data):
         """Verify a transaction received from another node"""
@@ -267,25 +509,30 @@ class BlockchainNode:
 
     def is_chain_valid(self, chain):
         """Verify if a given chain is valid"""
+        logger.info("Verifying chain")
         for i in range(1, len(chain)):
             current_block = chain[i]
             previous_block = chain[i-1]
 
             # Verify current block hash
             if current_block.hash != current_block.calculate_hash():
+                logger.error(f"Block {current_block.index} hash mismatch")
                 return False
 
             # Verify chain continuity
             if current_block.previous_hash != previous_block.hash:
+                logger.error(f"Block {current_block.index} previous hash mismatch")
                 return False
 
             # Verify block mining difficulty
             if current_block.hash[:self.difficulty] != "0" * self.difficulty:
+                logger.error(f"Block {current_block.index} does not meet difficulty requirement")   
                 return False
 
             # Verify all transactions in the block
             for transaction in current_block.transactions:
                 if not transaction.verify_crc():
+                    logger.error(f"Transaction CRC verification failed - Block: {current_block.index}")
                     return False
 
         return True
@@ -407,16 +654,27 @@ class BlockchainNode:
             }
           
     def verify_block(self, block):
-        # Verify block hash
-        if block.hash[:self.difficulty] != "0" * self.difficulty:
-            return False
-
-        # Verify transactions
-        for transaction in block.transactions:
-            if not transaction.verify_crc():
+            """Enhanced block verification with special handling for genesis block"""
+            # Special case for genesis block
+            if block.index == 0:
+                if block.previous_hash != "0":
+                    logger.error("Genesis block must have previous_hash '0'")
+                    return False
+                # For genesis block, we don't check mining difficulty
+                return all(transaction.verify_crc() for transaction in block.transactions)
+            
+            # For all other blocks
+            # Verify block meets difficulty requirement
+            if block.hash[:self.difficulty] != "0" * self.difficulty:
+                logger.error(f"Block {block.index} does not meet difficulty requirement")
                 return False
 
-        return True
+            # Verify transactions
+            if not all(transaction.verify_crc() for transaction in block.transactions):
+                logger.error(f"Transaction verification failed in block {block.index}")
+                return False
+
+            return True
 
     def mine_pending_transactions(self):
         logger.info("Starting mining process xxc")
@@ -509,6 +767,143 @@ def create_blockchain_app():
     app = Flask(__name__)
     node_id = os.getenv('NODE_ID', 'node1')
     blockchain = BlockchainNode(node_id=node_id)
+
+    @app.route('/simulate/failure', methods=['POST'])
+    def simulate_failure():
+        data = request.get_json()
+        failure_type = data.get('type', 'node_down')
+        
+        if failure_type == 'node_down':
+            # Symuluj wyłączenie węzła
+            logger.critical("Simulating node down failure. Exiting process.")
+            os._exit(1)
+            
+        elif failure_type == 'data_corruption':
+            # Symuluj uszkodzenie danych
+            logger.warning("Simulating data corruption")
+            # Uszkodź dane w losowym bloku (oprócz bloku genesis)
+            if len(blockchain.chain) > 1:
+                block_idx = random.randint(1, len(blockchain.chain) - 1)
+                block = blockchain.chain[block_idx]
+                if block.transactions:
+                    # Uszkodź dane pierwszej transakcji
+                    block.transactions[0].data = "corrupted_data"
+                    return jsonify({'message': 'Data corruption simulated'}), 200
+                    
+        elif failure_type == 'hash_corruption':
+            # Symuluj uszkodzenie hasha
+            logger.warning("Simulating hash corruption")
+            if len(blockchain.chain) > 1:
+                block_idx = random.randint(1, len(blockchain.chain) - 1)
+                blockchain.chain[block_idx].hash = "corrupted_hash"
+                return jsonify({'message': 'Hash corruption simulated'}), 200
+
+        return jsonify({'message': 'Unknown failure type'}), 400
+
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return jsonify({'status': 'healthy', 'node_id': blockchain.node_id}), 200
+
+    @app.route('/synchronize', methods=['POST'])
+    def synchronize():
+        data = request.get_json()
+        try:
+            # Rekonstruuj blockchain z otrzymanych danych
+            new_chain = []
+            incoming_chain_length = len(data['chain'])
+            current_chain_length = len(blockchain.chain)
+            
+            # Jeśli łańcuchy są tej samej długości, porównaj hash ostatniego bloku
+            if incoming_chain_length == current_chain_length:
+                current_last_hash = blockchain.chain[-1].hash
+                incoming_last_hash = data['chain'][-1]['hash']
+                
+                if current_last_hash == incoming_last_hash:
+                    logger.info("Chains are identical - no synchronization needed")
+                    return jsonify({'message': 'Chains already synchronized'}), 200
+            
+            # Rekonstrukcja łańcucha blok po bloku
+            for block_data in data['chain']:
+                try:
+                    # Rekonstruuj transakcje
+                    transactions = []
+                    for tx_data in block_data['transactions']:
+                        transaction = Transaction.from_dict(tx_data)
+                        if not transaction.verify_crc():
+                            raise ValueError(f"Transaction CRC verification failed for transaction {tx_data['crc']}")
+                        transactions.append(transaction)
+                    
+                    # Stwórz nowy blok
+                    block = Block(
+                        block_data['index'],
+                        block_data['previous_hash'],
+                        transactions,
+                        block_data['timestamp']
+                    )
+                    
+                    # Ustaw nonce i przelicz hash
+                    block.nonce = block_data['nonce']
+                    calculated_hash = block.calculate_hash()
+                    
+                    # Porównaj otrzymany hash z przeliczonym
+                    if calculated_hash != block_data['hash']:
+                        logger.error(f"Hash mismatch for block {block.index}")
+                        logger.error(f"Calculated: {calculated_hash}")
+                        logger.error(f"Received: {block_data['hash']}")
+                        return jsonify({'message': f'Hash mismatch for block {block.index}'}), 400
+                    
+                    block.hash = calculated_hash
+                    new_chain.append(block)
+                    
+                except Exception as e:
+                    logger.error(f"Error reconstructing block {block_data['index']}: {str(e)}")
+                    return jsonify({'message': f'Block reconstruction failed: {str(e)}'}), 400
+                
+            # Weryfikuj cały łańcuch
+            if not blockchain.is_chain_valid(new_chain):
+                logger.error("Invalid chain received during synchronization")
+                return jsonify({'message': 'Invalid chain received'}), 400
+                
+            # Aktualizuj chain tylko jeśli jest dłuższy lub jesteśmy w trybie recovery
+            is_recovery_mode = len(blockchain.chain) <= 1
+            if len(new_chain) > len(blockchain.chain) or is_recovery_mode:
+                blockchain.chain = new_chain
+                logger.info(f"Chain synchronized successfully - length: {len(new_chain)}")
+                
+                # Aktualizuj pending transactions
+                chain_transactions = {tx.crc for block in new_chain for tx in block.transactions}
+                new_pending_transactions = [
+                    Transaction.from_dict(tx_data)
+                    for tx_data in data['pending_transactions']
+                    if tx_data['crc'] not in chain_transactions
+                ]
+                
+                blockchain.pending_transactions = new_pending_transactions
+                logger.info(f"Updated pending transactions pool - count: {len(blockchain.pending_transactions)}")
+                
+                return jsonify({'message': 'Synchronization successful'}), 200
+            else:
+                logger.info("Current chain is up to date")
+                return jsonify({'message': 'Current chain is up to date'}), 200
+
+        except Exception as e:
+            logger.error(f"Error during synchronization: {e}")
+            return jsonify({'message': f'Synchronization failed: {str(e)}'}), 500
+    
+    @app.route('/block/<int:index>', methods=['GET'])
+    def get_block(index):
+        if 0 <= index < len(blockchain.chain):
+            block = blockchain.chain[index]
+            block_data = {
+                'index': block.index,
+                'previous_hash': block.previous_hash,
+                'timestamp': block.timestamp,
+                'transactions': [t.to_dict() for t in block.transactions],
+                'hash': block.hash,
+                'nonce': block.nonce
+            }
+            return jsonify(block_data), 200
+        return jsonify({'message': 'Block not found'}), 404
 
     @app.route('/transaction/new', methods=['POST'])
     def new_transaction():
@@ -620,7 +1015,6 @@ def create_blockchain_app():
 
         result = blockchain.mine_pending_transactions()
 
-        logger.info("tu jest cos", result)
         logger.info(result["success"])
         
         if result["success"]:
@@ -676,28 +1070,6 @@ def create_blockchain_app():
             'length': len(blockchain.chain)
         }
         return jsonify(response), 200
-
-    @app.route('/simulate/failure', methods=['POST'])
-    def simulate_failure():
-        data = request.get_json()
-        failure_type = data.get('type', 'node_down')
-        logger.warning(f"Simulating failure of type: {failure_type}")
-
-        if failure_type == 'node_down':
-            logger.critical("Simulating node down failure. Exiting process.")
-            os._exit(1)
-        elif failure_type == 'network_delay':
-            logger.info("Simulating network delay")
-            time.sleep(10)
-            return jsonify({'message': 'Network delay simulated'}), 200
-        elif failure_type == 'data_corruption':
-            logger.warning("Simulating data corruption")
-            for transaction in blockchain.pending_transactions:
-                transaction.crc = 'corrupted'
-            return jsonify({'message': 'Data corruption simulated'}), 200
-
-        logger.error("Unknown failure type provided")
-        return jsonify({'message': 'Unknown failure type'}), 400
 
     @app.route('/nodes/resolve', methods=['GET'])
     def consensus():
