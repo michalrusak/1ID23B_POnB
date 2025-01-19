@@ -32,4 +32,34 @@
       </div>
     </ng-container>
   </div>
+
+  <div class="node-list-container">
+    <h3>Nodes</h3>
+    <ul class="node-list">
+      <li *ngFor="let node of nodes" [class.inactive]="!node.active">
+        <span class="node-status" [class.active]="node.active"></span>
+        <span class="node-name">{{ node.name }}</span>
+        <button (click)="toggleNode(node.id)">Disable</button>
+        <button (click)="simulateHashCorruption(node.id)">Corrupt Hash</button>
+        <button (click)="simulateDataCorruption(node.id)">Corrupt File</button>
+      </li>
+    </ul>
+  </div>
+
+  <div class="chain-container">
+    <h2>Blockchain</h2>
+    <div *ngFor="let block of chain" class="block">
+      <h3>Block {{ block.index }}</h3>
+      <p>Hash: {{ block.hash }}</p>
+      <p>Previous Hash: {{ block.previous_hash }}</p>
+      <div *ngFor="let transaction of block.transactions">
+        <p>Type: {{ transaction.type }}</p>
+        <ng-container *ngIf="transaction.type === 'image'">
+          <img [src]="'data:image/png;base64,' + transaction.data" alt="Transaction Image" />
+        </ng-container>
+      </div>
+    </div>
+  </div>
+
+
 </div>
