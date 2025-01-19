@@ -182,6 +182,7 @@ class BlockchainNode:
                 if longest_chain:
                     self.chain = longest_chain
                     logger.info(f"Initial sync successful - Chain length: {len(self.chain)}")
+                    self.verify_chain_integrity()  # Verify chain integrity after sync
                     return True
                 else:
                     logger.info("No longer valid chain found, keeping genesis block")
@@ -328,11 +329,9 @@ class BlockchainNode:
         thread = threading.Thread(target=health_check, daemon=True)
         thread.start()
 
-
-
-
     def verify_chain_integrity(self):
         """Weryfikuje integralność blockchain i naprawia uszkodzenia"""
+        logger.info("Verifying chain integrity")
         corrupted_blocks = []
         
         # Sprawdź każdy blok
@@ -362,6 +361,7 @@ class BlockchainNode:
 
     def repair_corrupted_blocks(self, corrupted_indices):
         """Naprawia uszkodzone bloki poprzez pobranie poprawnych kopii od innych węzłów"""
+        logger.info(f"Repairing corrupted blocks: {corrupted_indices}")
         for node in self.nodes:
             try:
                 # Pobierz kopie bloków od innych węzłów
@@ -372,6 +372,8 @@ class BlockchainNode:
                     )
                     
                     if response.status_code == 200:
+                        logger.info("w if po repsonse data")
+                        logger.info(f"Received block {index} from node {node}")
                         block_data = response.json()
                         # Zweryfikuj poprawność bloku
                         transactions = [Transaction.from_dict(t) for t in block_data['transactions']]
@@ -526,7 +528,7 @@ class BlockchainNode:
 
             # Verify block mining difficulty
             if current_block.hash[:self.difficulty] != "0" * self.difficulty:
-                logger.error(f"Block {current_block.index} does not meet difficulty requirement")   
+                logger.error(f"Block {current_block.index} does not meet difficulty requirement 1")   
                 return False
 
             # Verify all transactions in the block
@@ -665,8 +667,10 @@ class BlockchainNode:
             
             # For all other blocks
             # Verify block meets difficulty requirement
+            # STOP hash corrupted
             if block.hash[:self.difficulty] != "0" * self.difficulty:
-                logger.error(f"Block {block.index} does not meet difficulty requirement")
+                logger.info(f"self.difficulty: {self.difficulty}, block.hash: {block.hash}")
+                logger.error(f"Block {block.index} does not meet difficulty requirement 2")
                 return False
 
             # Verify transactions
