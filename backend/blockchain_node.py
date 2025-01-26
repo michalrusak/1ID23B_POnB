@@ -197,56 +197,36 @@ class BlockchainNode:
         return False
 
     def reconstruct_chain(self, chain_data):
-        """Reconstructs chain from JSON data with improved validation"""
+        """
+        Simply reconstructs chain from JSON data
+        """
         try:
             reconstructed_chain = []
             
             for block_data in chain_data:
-                # Log the block data we're processing
-                logger.info(f"Reconstructing block {block_data['index']}")
-                
-                # Reconstruct transactions with detailed logging
+                # Reconstruct transactions
                 transactions = []
                 for tx_data in block_data['transactions']:
-                    try:
-                        tx = Transaction.from_dict(tx_data)
-                        if not tx.verify_crc():
-                            logger.error(f"Transaction CRC verification failed in block {block_data['index']}")
-                            return None
-                        transactions.append(tx)
-                    except Exception as e:
-                        logger.error(f"Error reconstructing transaction in block {block_data['index']}: {e}")
-                        return None
+                    transaction = Transaction.from_dict(tx_data)
+                    transactions.append(transaction)
 
                 # Create block
                 block = Block(
                     block_data['index'],
                     block_data['previous_hash'],
                     transactions,
-                    block_data['timestamp']
+                    block_data['timestamp'],
                 )
                 
-                # Set the hash and nonce from the original block
+                # Just set the hash and nonce as received
                 block.hash = block_data['hash']
-                block.nonce = block_data.get('nonce', 0)  # Default to 0 if not present
-                
-                # Verify the reconstructed block
-                if not self.verify_block(block):
-                    logger.error(f"Block validation failed during reconstruction: {block.index}")
-                    logger.error(f"Block hash: {block.hash}")
-                    logger.error(f"Previous hash: {block.previous_hash}")
-                    return None
-                
-                # Verify chain continuity (except for genesis block)
-                if reconstructed_chain and block.previous_hash != reconstructed_chain[-1].hash:
-                    logger.error(f"Chain continuity broken at block {block.index}")
-                    return None
+                block.nonce = block_data.get('nonce', 0)
                 
                 reconstructed_chain.append(block)
-                logger.info(f"Successfully reconstructed block {block.index}")
-            
+                #stop hash corrupted
+                
             return reconstructed_chain
-            
+                
         except Exception as e:
             logger.error(f"Error during chain reconstruction: {str(e)}")
             return None
@@ -519,22 +499,29 @@ class BlockchainNode:
             # Verify current block hash
             if current_block.hash != current_block.calculate_hash():
                 logger.error(f"Block {current_block.index} hash mismatch")
+                logger.error(f"Calculated: {current_block.calculate_hash()}")
+                logger.error(f"Stored: {current_block.hash}")
                 return False
 
             # Verify chain continuity
             if current_block.previous_hash != previous_block.hash:
                 logger.error(f"Block {current_block.index} previous hash mismatch")
+                logger.error(f"Expected: {previous_block.hash}")
+                logger.error(f"Received: {current_block.previous_hash}")
                 return False
 
             # Verify block mining difficulty
             if current_block.hash[:self.difficulty] != "0" * self.difficulty:
                 logger.error(f"Block {current_block.index} does not meet difficulty requirement 1")   
+                logger.error(f"Block hash: {current_block.hash}")
+                logger.error(f"Difficulty: {self.difficulty}")
                 return False
 
             # Verify all transactions in the block
             for transaction in current_block.transactions:
                 if not transaction.verify_crc():
                     logger.error(f"Transaction CRC verification failed - Block: {current_block.index}")
+                    logger.error(f"Transaction CRC: {transaction.crc}")
                     return False
 
         return True
