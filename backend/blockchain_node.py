@@ -53,11 +53,17 @@ class Transaction:
         return is_valid
 
     def to_dict(self):
+        """Convert transaction to dictionary with proper data type handling"""
         if self.type == "image":
-            # Convert image data to base64 for JSON serialization
+            # Ensure data is in bytes format for images
+            if not isinstance(self.data, bytes):
+                # If corrupted to string, convert back to bytes
+                data_bytes = self.data.encode('utf-8')
+            else:
+                data_bytes = self.data
             return {
                 "type": self.type,
-                "data": base64.b64encode(self.data).decode('utf-8'),
+                "data": base64.b64encode(data_bytes).decode('utf-8'),
                 "timestamp": self.timestamp,
                 "crc": self.crc,
                 "confirmations": list(self.confirmations)
@@ -72,15 +78,17 @@ class Transaction:
 
     @staticmethod
     def from_dict(data_dict):
-        transaction = Transaction(
-            base64.b64decode(data_dict["data"]) if data_dict["type"] == "image" else data_dict["data"],
-            data_dict["type"]
-        )
+        """Create transaction from dictionary with proper data type handling"""
+        if data_dict["type"] == "image":
+            data = base64.b64decode(data_dict["data"])
+        else:
+            data = data_dict["data"]
+        
+        transaction = Transaction(data, data_dict["type"])
         transaction.timestamp = data_dict["timestamp"]
         transaction.crc = data_dict["crc"]
         transaction.confirmations = set(data_dict["confirmations"])
         return transaction
-
 class Block:
     def __init__(self, index, previous_hash, transactions, timestamp=None):
         self.node_id = os.getenv('NODE_ID', 'unknown')
@@ -364,69 +372,141 @@ class BlockchainNode:
         thread.start()
 
     def verify_chain_integrity(self):
-        """Weryfikuje integralność blockchain i naprawia uszkodzenia"""
-        logger.info("Verifying chain integrity")
-        corrupted_blocks = []
-        
-        # Sprawdź każdy blok
-        for i in range(1, len(self.chain)):
-            block = self.chain[i]
-            prev_block = self.chain[i-1]
+            """Weryfikuje integralność blockchain i naprawia uszkodzenia"""
+            logger.info("Verifying chain integrity")
+            corrupted_blocks = []
             
-            # Sprawdź hash poprzedniego bloku
-            if block.previous_hash != prev_block.hash:
-                corrupted_blocks.append(i)
-                continue
+            for i in range(1, len(self.chain)):
+                block = self.chain[i]
+                prev_block = self.chain[i-1]
                 
-            # Sprawdź hash aktualnego bloku
-            if block.hash != block.calculate_hash():
-                corrupted_blocks.append(i)
-                continue
-                
-            # Sprawdź transakcje
-            for tx in block.transactions:
-                if not tx.verify_crc():
+                # Sprawdź hash poprzedniego bloku
+                if block.previous_hash != prev_block.hash:
                     corrupted_blocks.append(i)
-                    break
+                    continue
+                    
+                # Sprawdź hash aktualnego bloku
+                if block.hash != block.calculate_hash():
+                    corrupted_blocks.append(i)
+                    continue
+                    
+                # Sprawdź transakcje
+                for tx in block.transactions:
+                    if not tx.verify_crc():
+                        corrupted_blocks.append(i)
+                        break
 
-        if corrupted_blocks:
-            logger.error(f"Found corrupted blocks: {corrupted_blocks}")
-            self.repair_corrupted_blocks(corrupted_blocks)
+            if corrupted_blocks:
+                logger.error(f"Found corrupted blocks: {corrupted_blocks}")
+                self.verify_and_correct_data()  # First try to repair corrupted data
+                self.repair_corrupted_blocks(corrupted_blocks)  # Then repair blocks if needed
 
     def repair_corrupted_blocks(self, corrupted_indices):
         """Naprawia uszkodzone bloki poprzez pobranie poprawnych kopii od innych węzłów"""
         logger.info(f"Repairing corrupted blocks: {corrupted_indices}")
-        for node in self.nodes:
-            try:
-                # Pobierz kopie bloków od innych węzłów
-                for index in corrupted_indices:
+        
+        for index in corrupted_indices:
+            consensus_data = None
+            consensus_count = 0
+            
+            for node in self.nodes:
+                try:
                     response = requests.get(
                         f'{node}/blockchain/block/{index}',
                         timeout=5
                     )
                     
                     if response.status_code == 200:
-                        logger.info("w if po repsonse data")
-                        logger.info(f"Received block {index} from node {node}")
                         block_data = response.json()
-                        # Zweryfikuj poprawność bloku
+                        
+                        # Reconstruct and verify block
                         transactions = [Transaction.from_dict(t) for t in block_data['transactions']]
-                        block = Block(
-                            block_data['index'],
-                            block_data['previous_hash'],
-                            transactions,
-                            block_data['timestamp']
+                        if all(tx.verify_crc() for tx in transactions):  # Verify all transactions
+                            if not consensus_data:
+                                consensus_data = block_data
+                                consensus_count = 1
+                            elif block_data == consensus_data:
+                                consensus_count += 1
+                                
+                            # If we have consensus from majority of nodes
+                            if consensus_count > len(self.nodes) / 2:
+                                # Reconstruct the block
+                                block = Block(
+                                    consensus_data['index'],
+                                    consensus_data['previous_hash'],
+                                    transactions,
+                                    consensus_data['timestamp']
+                                )
+                                block.hash = consensus_data['hash']
+                                block.nonce = consensus_data['nonce']
+                                
+                                if self.verify_block(block):
+                                    self.chain[index] = block
+                                    logger.info(f"Successfully repaired block {index}")
+                                    break
+                                
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Error getting block from node {node}: {e}")
+                    continue
+
+    def verify_and_correct_data(self):
+        """Verify transaction data across nodes and correct any corrupted ones"""
+        logger.info("Starting data verification across nodes")
+        
+        for block_index in range(len(self.chain)):
+            block = self.chain[block_index]
+            
+            for tx_index, transaction in enumerate(block.transactions):
+                data_counts = {}  # Dictionary to store data frequencies
+                correct_data = None
+                
+                # Collect data from other nodes
+                for node in self.nodes:
+                    try:
+                        response = requests.get(
+                            f'{node}/blockchain/block/{block_index}',
+                            timeout=5
                         )
-                        block.hash = block_data['hash']
-                        block.nonce = block_data['nonce']
-                        
-                        if self.verify_block(block):
-                            self.chain[index] = block
-                            logger.info(f"Successfully repaired block {index}")
-                        
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error getting block from node {node}: {e}")
-                continue
+                        if response.status_code == 200:
+                            block_data = response.json()
+                            if len(block_data['transactions']) > tx_index:
+                                remote_tx = block_data['transactions'][tx_index]
+                                remote_data = remote_tx['data']
+                                data_counts[remote_data] = data_counts.get(remote_data, 0) + 1
+                                
+                                # If this data appears more than half the nodes, it's likely correct
+                                if data_counts[remote_data] > len(self.nodes) / 2:
+                                    correct_data = remote_data
+                                    break
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Error getting block from node {node}: {e}")
+                        continue
+                
+                # If we found consensus data and it's different from our current data
+                current_tx_dict = transaction.to_dict()
+                if correct_data and current_tx_dict['data'] != correct_data:
+                    logger.warning(f"Data mismatch detected in block {block_index}, transaction {tx_index}")
+                    logger.warning(f"Local data: {current_tx_dict['data']}")
+                    logger.warning(f"Consensus data: {correct_data}")
+                    
+                    # Verify the consensus data has valid CRC
+                    consensus_tx = Transaction.from_dict({
+                        'type': transaction.type,
+                        'data': correct_data,
+                        'timestamp': transaction.timestamp,
+                        'crc': transaction.crc,
+                        'confirmations': list(transaction.confirmations)
+                    })
+                    
+                    if consensus_tx.verify_crc():
+                        # Update the corrupted data
+                        if transaction.type == "image":
+                            self.chain[block_index].transactions[tx_index].data = base64.b64decode(correct_data)
+                        else:
+                            self.chain[block_index].transactions[tx_index].data = correct_data
+                        logger.info(f"Corrected data in block {block_index}, transaction {tx_index}")
+                    else:
+                        logger.error(f"Consensus data failed CRC verification for block {block_index}, transaction {tx_index}")
 
     def verify_transaction(self, transaction_data):
         """Verify a transaction received from another node"""
