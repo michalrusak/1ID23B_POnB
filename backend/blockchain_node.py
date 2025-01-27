@@ -189,7 +189,6 @@ class BlockchainNode:
                         remote_hash = block_data['hash']
                         hash_counts[remote_hash] = hash_counts.get(remote_hash, 0) + 1
                         
-                        # If this hash appears more than half the nodes, it's likely correct
                         if hash_counts[remote_hash] > len(self.nodes) / 2:
                             correct_hash = remote_hash
                             break
@@ -526,7 +525,7 @@ class BlockchainNode:
                         logger.info(f"Corrected data for block {block_index}, transaction {tx_index}")
                     else:
                         logger.error(f"Consensus data CRC verification failed for block {block_index}, transaction {tx_index}")
-                        
+
     def verify_transaction(self, transaction_data):
         """Verify a transaction received from another node"""
         logger.info(
@@ -650,7 +649,6 @@ class BlockchainNode:
             previous_block = chain[i-1]
 
             # Verify current block hash
-            #stop hash corrupted
             if current_block.hash != current_block.calculate_hash():
                 logger.error(f"Block {current_block.index} hash mismatch")
                 logger.error(f"Calculated: {current_block.calculate_hash()}")
