@@ -158,6 +158,17 @@ class BlockchainNode:
         # Initial synchronization with network
         self.initial_sync()
         self.start_hash_verification()
+        self.start_data_verification()
+
+    def start_data_verification(self):
+        """Start periodic data verification"""
+        def verify_data_periodically():
+            while True:
+                self.verify_and_correct_data()
+                time.sleep(30)  # Check every 30 seconds
+            
+        thread = threading.Thread(target=verify_data_periodically, daemon=True)
+        thread.start()
 
 
     def verify_and_correct_hashes(self):
@@ -450,14 +461,12 @@ class BlockchainNode:
                     continue
 
     def verify_and_correct_data(self):
-        """Verify transaction data across nodes and correct any corrupted ones"""
+        """Verify and correct data in transactions across nodes"""
         logger.info("Starting data verification across nodes")
         
-        for block_index in range(len(self.chain)):
-            block = self.chain[block_index]
-            
+        for block_index, block in enumerate(self.chain):
             for tx_index, transaction in enumerate(block.transactions):
-                data_counts = {}  # Dictionary to store data frequencies
+                data_counts = {}
                 correct_data = None
                 
                 # Collect data from other nodes
@@ -472,42 +481,52 @@ class BlockchainNode:
                             if len(block_data['transactions']) > tx_index:
                                 remote_tx = block_data['transactions'][tx_index]
                                 remote_data = remote_tx['data']
-                                data_counts[remote_data] = data_counts.get(remote_data, 0) + 1
                                 
-                                # If this data appears more than half the nodes, it's likely correct
-                                if data_counts[remote_data] > len(self.nodes) / 2:
+                                # Handle base64 encoded image data
+                                if transaction.type == "image":
+                                    try:
+                                        # Ensure data is properly base64 encoded
+                                        if isinstance(remote_data, str):
+                                            remote_data = base64.b64decode(remote_data)
+                                    except:
+                                        logger.error(f"Invalid base64 data from node {node}")
+                                        continue
+                                
+                                data_key = remote_data if isinstance(remote_data, str) else base64.b64encode(remote_data).decode('utf-8')
+                                data_counts[data_key] = data_counts.get(data_key, 0) + 1
+                                
+                                if data_counts[data_key] > len(self.nodes) / 2:
                                     correct_data = remote_data
                                     break
+                                    
                     except requests.exceptions.RequestException as e:
                         logger.error(f"Error getting block from node {node}: {e}")
                         continue
                 
                 # If we found consensus data and it's different from our current data
                 current_tx_dict = transaction.to_dict()
-                if correct_data and current_tx_dict['data'] != correct_data:
+                current_data = current_tx_dict['data']
+                
+                if correct_data and (
+                    (isinstance(correct_data, str) and current_data != correct_data) or
+                    (isinstance(correct_data, bytes) and base64.b64decode(current_data) != correct_data)
+                ):
                     logger.warning(f"Data mismatch detected in block {block_index}, transaction {tx_index}")
-                    logger.warning(f"Local data: {current_tx_dict['data']}")
-                    logger.warning(f"Consensus data: {correct_data}")
                     
-                    # Verify the consensus data has valid CRC
-                    consensus_tx = Transaction.from_dict({
-                        'type': transaction.type,
-                        'data': correct_data,
-                        'timestamp': transaction.timestamp,
-                        'crc': transaction.crc,
-                        'confirmations': list(transaction.confirmations)
-                    })
+                    # Create consensus transaction
+                    consensus_tx = Transaction(
+                        correct_data,
+                        transaction.type
+                    )
                     
                     if consensus_tx.verify_crc():
                         # Update the corrupted data
-                        if transaction.type == "image":
-                            self.chain[block_index].transactions[tx_index].data = base64.b64decode(correct_data)
-                        else:
-                            self.chain[block_index].transactions[tx_index].data = correct_data
-                        logger.info(f"Corrected data in block {block_index}, transaction {tx_index}")
+                        transaction.data = correct_data
+                        transaction.crc = consensus_tx.crc
+                        logger.info(f"Corrected data for block {block_index}, transaction {tx_index}")
                     else:
-                        logger.error(f"Consensus data failed CRC verification for block {block_index}, transaction {tx_index}")
-
+                        logger.error(f"Consensus data CRC verification failed for block {block_index}, transaction {tx_index}")
+                        
     def verify_transaction(self, transaction_data):
         """Verify a transaction received from another node"""
         logger.info(
