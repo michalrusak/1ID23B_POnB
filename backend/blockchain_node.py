@@ -149,6 +149,59 @@ class BlockchainNode:
         self.start_health_check()
         # Initial synchronization with network
         self.initial_sync()
+        self.start_hash_verification()
+
+
+    def verify_and_correct_hashes(self):
+        """Verify block hashes across nodes and correct any corrupted ones"""
+        logger.info("Starting hash verification across nodes")
+        
+        for block_index in range(len(self.chain)):
+            current_block = self.chain[block_index]
+            hash_counts = {}  # Dictionary to store hash frequencies
+            correct_hash = None
+            
+            # Collect hashes from other nodes
+            for node in self.nodes:
+                try:
+                    response = requests.get(f'{node}/blockchain/block/{block_index}', timeout=5)
+                    if response.status_code == 200:
+                        block_data = response.json()
+                        remote_hash = block_data['hash']
+                        hash_counts[remote_hash] = hash_counts.get(remote_hash, 0) + 1
+                        
+                        # If this hash appears more than half the nodes, it's likely correct
+                        if hash_counts[remote_hash] > len(self.nodes) / 2:
+                            correct_hash = remote_hash
+                            break
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Error getting block from node {node}: {e}")
+                    continue
+            
+            # If we found a consensus hash and it's different from our current hash
+            if correct_hash and current_block.hash != correct_hash:
+                logger.warning(f"Hash mismatch detected in block {block_index}")
+                logger.warning(f"Local hash: {current_block.hash}")
+                logger.warning(f"Consensus hash: {correct_hash}")
+                
+                # Verify the consensus hash meets difficulty requirement
+                if correct_hash[:self.difficulty] == "0" * self.difficulty:
+                    # Update the corrupted hash
+                    self.chain[block_index].hash = correct_hash
+                    logger.info(f"Corrected hash for block {block_index}")
+                else:
+                    logger.error(f"Consensus hash does not meet difficulty requirement for block {block_index}")
+
+    # Add periodic hash verification
+    def start_hash_verification(self):
+        """Start periodic hash verification"""
+        def verify_hashes_periodically():
+            while True:
+                self.verify_and_correct_hashes()
+                time.sleep(30)  # Check every 30 seconds
+                
+        thread = threading.Thread(target=verify_hashes_periodically, daemon=True)
+        thread.start()
 
     def initial_sync(self):
         """Perform initial synchronization when node starts"""
@@ -1086,5 +1139,21 @@ def create_blockchain_app():
             'chain': chain_data,
             'length': len(blockchain.chain)
         }), 200
+    
+    @app.route('/verify_hashes', methods=['POST'])
+    def verify_hashes():
+        """Endpoint to trigger hash verification"""
+        try:
+            blockchain.verify_and_correct_hashes()
+            return jsonify({
+                'message': 'Hash verification completed',
+                'status': 'success'
+            }), 200
+        except Exception as e:
+            logger.error(f"Error during hash verification: {e}")
+            return jsonify({
+                'message': f'Hash verification failed: {str(e)}',
+                'status': 'error'
+            }), 500
 
     return app
