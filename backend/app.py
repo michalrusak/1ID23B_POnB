@@ -82,15 +82,11 @@ def start_network(num_nodes=6, start_port=5001):
         process.join()
 
 if __name__ == '__main__':
-    # Pobranie portu z ENV lub użycie domyślnego
     port = int(os.getenv('PORT', 5001))
 
     # Uruchamianie pojedynczego węzła
     logger.info("Uruchamianie aplikacji...")
     start_node(port)
 
-
-
 def generate_node_addresses(start_port, num_nodes):
-    # Używamy nazw serwisów z docker-compose zamiast localhost
     return [f"http://node{i}:{5000 + i}" for i in range(1, num_nodes + 1)]

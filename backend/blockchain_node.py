@@ -140,7 +140,6 @@ class Block:
         logger.info(f"czy tu jestem end minig") 
 
 def generate_node_addresses(start_port, num_nodes):
-    # Używamy nazw serwisów z docker-compose zamiast localhost
     return [f"http://node{i}:{5000 + i}" for i in range(1, num_nodes + 1)]
 
 class BlockchainNode:
@@ -177,7 +176,7 @@ class BlockchainNode:
         
         for block_index in range(len(self.chain)):
             current_block = self.chain[block_index]
-            hash_counts = {}  # Dictionary to store hash frequencies
+            hash_counts = {} 
             correct_hash = None
             
             # Collect hashes from other nodes
@@ -281,7 +280,6 @@ class BlockchainNode:
                     transaction = Transaction.from_dict(tx_data)
                     transactions.append(transaction)
 
-                # Create block
                 block = Block(
                     block_data['index'],
                     block_data['previous_hash'],
@@ -289,12 +287,10 @@ class BlockchainNode:
                     block_data['timestamp'],
                 )
                 
-                # Just set the hash and nonce as received
                 block.hash = block_data['hash']
                 block.nonce = block_data.get('nonce', 0)
                 
                 reconstructed_chain.append(block)
-                #stop hash corrupted
                 
             return reconstructed_chain
                 
@@ -364,7 +360,7 @@ class BlockchainNode:
 
     def handle_node_failure(self, node):
         """Handle node failure by marking it as failed and initiating recovery"""
-        logger.warning(f"Node {node} is down - marking as failed ---- faillleeeeeeeeeeeeeeed ")
+        logger.warning(f"Node {node} is down - marking as failed")
         if node not in self.failed_nodes:
             logger.error(f"Node {node} is down - marking as failed")
             self.failed_nodes[node] = time.time()
@@ -390,17 +386,14 @@ class BlockchainNode:
                 block = self.chain[i]
                 prev_block = self.chain[i-1]
                 
-                # Sprawdź hash poprzedniego bloku
                 if block.previous_hash != prev_block.hash:
                     corrupted_blocks.append(i)
                     continue
                     
-                # Sprawdź hash aktualnego bloku
                 if block.hash != block.calculate_hash():
                     corrupted_blocks.append(i)
                     continue
                     
-                # Sprawdź transakcje
                 for tx in block.transactions:
                     if not tx.verify_crc():
                         corrupted_blocks.append(i)
@@ -438,8 +431,7 @@ class BlockchainNode:
                             elif block_data == consensus_data:
                                 consensus_count += 1
                                 
-                            # If we have consensus from majority of nodes
-                            if consensus_count > len(self.nodes) / 2:
+                            if consensus_count > 5:
                                 # Reconstruct the block
                                 block = Block(
                                     consensus_data['index'],
@@ -556,7 +548,6 @@ class BlockchainNode:
         """Generuje adresy węzłów używając nazw serwisów Docker"""
         node_addresses = []
         for i in range(1, num_nodes + 1):
-            # Pomijamy bieżący węzeł przy generowaniu listy innych węzłów
             if f"node{i}" != self.node_id:
                 node_addresses.append(f"http://node{i}:500{i}")
         return node_addresses
@@ -594,8 +585,9 @@ class BlockchainNode:
                 if result:
                     confirmations.add(result)
 
-        # Dodaj własne potwierdzenie
-        transaction.confirmations.add(f"http://{self.node_id}:5001")
+        node_num = int(self.node_id.replace('node', ''))
+        port = f"500{node_num}"
+        transaction.confirmations.add(f"http://{self.node_id}:{port}")
         
         # required_confirmations = (len(self.nodes) + 1) // 2  # +1 aby uwzględnić bieżący węzeł
         required_confirmations = 6
@@ -806,7 +798,6 @@ class BlockchainNode:
             
             # For all other blocks
             # Verify block meets difficulty requirement
-            # STOP hash corrupted
             if block.hash[:self.difficulty] != "0" * self.difficulty:
                 logger.info(f"self.difficulty: {self.difficulty}, block.hash: {block.hash}")
                 logger.error(f"Block {block.index} does not meet difficulty requirement 2")
@@ -917,24 +908,19 @@ def create_blockchain_app():
         failure_type = data.get('type', 'node_down')
         
         if failure_type == 'node_down':
-            # Symuluj wyłączenie węzła
             logger.critical("Simulating node down failure. Exiting process.")
             os._exit(1)
             
         elif failure_type == 'data_corruption':
-            # Symuluj uszkodzenie danych
             logger.warning("Simulating data corruption")
-            # Uszkodź dane w losowym bloku (oprócz bloku genesis)
             if len(blockchain.chain) > 1:
                 block_idx = random.randint(1, len(blockchain.chain) - 1)
                 block = blockchain.chain[block_idx]
                 if block.transactions:
-                    # Uszkodź dane pierwszej transakcji
                     block.transactions[0].data = "corrupted_data"
                     return jsonify({'message': 'Data corruption simulated'}), 200
                     
         elif failure_type == 'hash_corruption':
-            # Symuluj uszkodzenie hasha
             logger.warning("Simulating hash corruption")
             if len(blockchain.chain) > 1:
                 block_idx = random.randint(1, len(blockchain.chain) - 1)
@@ -951,7 +937,6 @@ def create_blockchain_app():
     def synchronize():
         data = request.get_json()
         try:
-            # Rekonstruuj blockchain z otrzymanych danych
             new_chain = []
             incoming_chain_length = len(data['chain'])
             current_chain_length = len(blockchain.chain)
